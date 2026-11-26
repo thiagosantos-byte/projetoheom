@@ -191,9 +191,9 @@ bash ./scripts/backup-demonstracao.sh
 
 O backup inclui o JSON local e as fotografias locais presentes em `storage`. No modo institucional, configure backups com `pg_dump` do PostgreSQL e cópia consistente do diretório de imagens, com política de retenção e teste de restauração definidos pela TI. Nunca considere um backup como validado antes de executar uma restauração de teste.
 
-## Demonstração hospedada (Vercel + Render, sem Docker)
+## Demonstração hospedada (somente Vercel)
 
-Consulte `docs/DEPLOY-VERCEL-RENDER.md` para publicar a interface no Vercel e a API demonstrativa no Render, configurar login administrativo, CORS e armazenamento. A hospedagem demonstrativa não substitui o modo institucional PostgreSQL + MQTT.
+Consulte `docs/DEPLOY-VERCEL.md` para publicar a interface React e a API Express como Vercel Functions no mesmo projeto e domínio. O modo demonstrativo oferece quatro perfis fictícios de acesso sem senha. A persistência em `/tmp` é temporária e serve apenas para avaliação; para manter cadastros e fotografias entre instâncias, conecte um banco/armazenamento persistente da Vercel. O modo institucional PostgreSQL + MQTT continua separado.
 
 ## Segurança e implantação
 

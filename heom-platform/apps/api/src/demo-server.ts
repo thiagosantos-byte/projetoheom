@@ -50,7 +50,8 @@ const server = http.createServer(app);
 const port = Number(process.env.PORT || process.env.APP_PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET || '';
 const demoProfilesEnabled = process.env.ENABLE_DEMO_PROFILES === 'true' || (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_PROFILES !== 'false');
-const dataFile = resolve(process.env.HEOM_DATA_FILE || resolve(dirname(fileURLToPath(import.meta.url)), '../data/heom-demo.json'));
+const defaultDataFile = process.env.VERCEL === '1' ? '/tmp/heom-demo.json' : resolve(dirname(fileURLToPath(import.meta.url)), '../data/heom-demo.json');
+const dataFile = resolve(process.env.HEOM_DATA_FILE || defaultDataFile);
 const uuid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 let store: Store = { users: [], departments: [], rooms: [], assets: [], movements: [], alerts: [], gateways: [], locationEvents: [], notifications: [], auditLogs: [], assetPhotos: [], ocrResults: [], maintenanceOrders: [] };
@@ -81,6 +82,15 @@ function persist(): Promise<void> {
 
 /** Cria contas de avaliação sem senha conhecida, acessíveis apenas pelo fluxo
  * de entrada rápida do servidor demonstrativo. Nunca é importado pelo servidor institucional. */
+function stableIdFromKey(key: string): string {
+  const hex = crypto.createHash('sha256').update(`HEOM-DEMO:${key}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function stableDemoUserId(email: string): string {
+  return stableIdFromKey(`USER:${email.toLowerCase()}`);
+}
+
 async function ensureDemoProfiles(): Promise<boolean> {
   if (!demoProfilesEnabled) return false;
   let changed = false;
@@ -89,7 +99,7 @@ async function ensureDemoProfiles(): Promise<boolean> {
     if (alreadyExists) continue;
     const oneTimeSecret = crypto.randomBytes(48).toString('base64url');
     store.users.push({
-      id: uuid(),
+      id: stableDemoUserId(definition.email),
       name: definition.name,
       email: definition.email,
       role: definition.role,
@@ -126,7 +136,7 @@ async function createInitialStore(): Promise<Store> {
     ['DEMO-ENF', 'Enfermaria — exemplo demonstrativo', 'Setor fictício para avaliação da plataforma.'],
     ['DEMO-ALM', 'Almoxarifado — exemplo demonstrativo', 'Setor fictício para avaliação da plataforma.']
   ];
-  const departments: Department[] = departmentNames.map(([code, name, description]) => ({ id: uuid(), code, name, description, dataOrigin: 'SIMULADO', active: true }));
+  const departments: Department[] = departmentNames.map(([code, name, description]) => ({ id: stableIdFromKey(`DEPARTMENT:${code}`), code, name, description, dataOrigin: 'SIMULADO', active: true }));
   const departmentByCode = new Map<string, Department>(departments.map((item) => [item.code, item] as const));
   const roomSeeds = [
     ['DEMO-SALA-UTI', 'Sala demonstrativa UTI', 'DEMO-UTI', true, 22, 30],
@@ -136,7 +146,7 @@ async function createInitialStore(): Promise<Store> {
   ] as const;
   const rooms: Room[] = roomSeeds.map(([code, name, deptCode, isRestricted, mapX, mapY]) => {
     const department = departmentByCode.get(deptCode)!;
-    return { id: uuid(), code, name, departmentId: department.id, departmentName: department.name, floorLabel: 'Pavimento ilustrativo', isRestricted, dataOrigin: 'SIMULADO', mapX, mapY };
+    return { id: stableIdFromKey(`ROOM:${code}`), code, name, departmentId: department.id, departmentName: department.name, floorLabel: 'Pavimento ilustrativo', isRestricted, dataOrigin: 'SIMULADO', mapX, mapY };
   });
   const departmentId = (code: string) => departmentByCode.get(code)!.id;
   const roomId = (code: string) => rooms.find((room) => room.code === code)!.id;
@@ -148,17 +158,17 @@ async function createInitialStore(): Promise<Store> {
     ['SIM-HEOM-005', 'Ventilador pulmonar demonstrativo', 'Suporte ventilatório', 'DEMO-UTI', 'DEMO-SALA-UTI', 'TAG-DEMO-005', 'EM_OPERACAO']
   ] as const;
   const assets: Asset[] = assetSeeds.map(([assetNumber, name, category, deptCode, roomCode, trackingTagId, operationalStatus]) => ({
-    id: uuid(), assetNumber, officialPropertyNumber: null, name, category,
+    id: stableIdFromKey(`ASSET:${assetNumber}`), assetNumber, officialPropertyNumber: null, name, category,
     description: 'Registro fictício para demonstração. Não representa patrimônio oficial do HEOM.',
     manufacturer: null, model: null, serialNumber: null, departmentId: departmentId(deptCode), roomId: roomId(roomCode),
     operationalStatus, criticality: operationalStatus === 'EM_MANUTENCAO' ? 'ALTA' : 'MEDIA', trackingStatus: 'ULTIMA_LOCALIZACAO',
     trackingTagId, lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now()
   }));
   for (const asset of assets) asset.qrCode = `HEOM-ASSET:${asset.id}`;
-  const gateway: Gateway = { id: uuid(), code: 'DEMO-GW-01', name: 'Gateway demonstrativo 01', roomId: roomId('DEMO-SALA-UTI'), status: 'SEM_COMUNICACAO', lastSeenAt: null, dataOrigin: 'SIMULADO' };
+  const gateway: Gateway = { id: stableIdFromKey('GATEWAY:DEMO-GW-01'), code: 'DEMO-GW-01', name: 'Gateway demonstrativo 01', roomId: roomId('DEMO-SALA-UTI'), status: 'SEM_COMUNICACAO', lastSeenAt: null, dataOrigin: 'SIMULADO' };
   const firstAsset = assets[0]!;
   const sampleAlert: Alert = {
-    id: uuid(), assetId: firstAsset.id, alertType: 'RASTREAMENTO_DEMONSTRATIVO', severity: 'ATENCAO',
+    id: stableIdFromKey('ALERT:RASTREAMENTO_DEMONSTRATIVO'), assetId: firstAsset.id, alertType: 'RASTREAMENTO_DEMONSTRATIVO', severity: 'ATENCAO',
     title: 'Ambiente de demonstração preparado', description: 'Os equipamentos e ambientes desta base são fictícios e servem apenas para validar os fluxos do sistema.',
     status: 'ABERTO', createdAt: now(), acknowledgedBy: null, acknowledgedAt: null, resolvedBy: null, resolvedAt: null, resolutionNote: null
   };
@@ -762,21 +772,29 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 const bindHost = process.env.HOST || process.env.DEMO_BIND_HOST || '127.0.0.1';
-server.listen(port, bindHost, () => {
-  console.log('');
-  console.log('HEOM — MODO DE DEMONSTRAÇÃO LOCAL (SEM DOCKER)');
-  console.log(`API: http://${bindHost}:${port}/api/health`);
-  console.log(`Perfis de teste: ${demoProfilesEnabled ? 'habilitados apenas neste modo demonstrativo local' : 'desativados'}`);
-  console.log('Persistência: arquivo JSON local, com gravação em disco.');
-  console.log('Rastreamento: simulador interno; sem PostgreSQL, MQTT ou hardware real.');
-  console.log('');
-});
 
-function shutdown() {
-  console.log('\nEncerrando HEOM local...');
-  for (const socket of authenticatedSockets) socket.close(1001, 'Servidor encerrado');
-  wss.close();
-  server.close(() => process.exit(0));
+// Em execução local, a API mantém o servidor HTTP e WebSocket tradicionais.
+// Na Vercel, o Express é exportado para ser atendido por uma Function HTTP;
+// Functions não mantêm um servidor TCP/WebSocket permanente.
+if (process.env.VERCEL !== '1') {
+  server.listen(port, bindHost, () => {
+    console.log('');
+    console.log('HEOM — MODO DE DEMONSTRAÇÃO LOCAL (SEM DOCKER)');
+    console.log(`API: http://${bindHost}:${port}/api/health`);
+    console.log(`Perfis de teste: ${demoProfilesEnabled ? 'habilitados no modo demonstrativo' : 'desativados'}`);
+    console.log(`Persistência: ${dataFile}`);
+    console.log('Rastreamento: simulador interno; sem PostgreSQL, MQTT ou hardware real.');
+    console.log('');
+  });
+
+  function shutdown() {
+    console.log('\nEncerrando HEOM local...');
+    for (const socket of authenticatedSockets) socket.close(1001, 'Servidor encerrado');
+    wss.close();
+    server.close(() => process.exit(0));
+  }
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }
-process.once('SIGINT', shutdown);
-process.once('SIGTERM', shutdown);
+
+export default app;

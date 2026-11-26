@@ -29,7 +29,7 @@ Para habilitar na instância de demonstração hospedada, configure no serviço 
 ENABLE_DEMO_PROFILES=true
 ```
 
-Para desabilitar os cartões no ambiente local:
+Para desabilitar os cartões no ambiente local: 
 
 ```dotenv
 ENABLE_DEMO_PROFILES=false

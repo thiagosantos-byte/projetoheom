@@ -39,7 +39,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   let response: Response;
   try { response = await fetch(apiUrl(path), { ...init, headers }); }
-  catch { throw new ApiError('Não foi possível alcançar a API do HEOM. Verifique se o serviço está ativo e se VITE_API_URL está configurada.', 0); }
+  catch { throw new ApiError('Não foi possível alcançar a API do HEOM. Verifique se a rota /api está publicada no mesmo domínio.', 0); }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new ApiError(body.error || 'O sistema não conseguiu concluir a operação.', response.status, body);
   return body as T;
@@ -50,7 +50,7 @@ export async function apiBlob(path: string): Promise<Blob> {
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   let response: Response;
   try { response = await fetch(apiUrl(path), { headers }); }
-  catch { throw new ApiError('Não foi possível alcançar a API do HEOM. Verifique se o serviço está ativo e se VITE_API_URL está configurada.', 0); }
+  catch { throw new ApiError('Não foi possível alcançar a API do HEOM. Verifique se a rota /api está publicada no mesmo domínio.', 0); }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(body.error || 'Não foi possível obter o arquivo.', response.status);

@@ -236,7 +236,9 @@ function App() {
   useEffect(() => { void loadPage(); }, [loadPage]);
 
   useEffect(() => {
-    if (!user || !getToken()) return;
+    // Vercel Functions atendem HTTP sob demanda e não mantêm WebSocket permanente.
+    // Em desenvolvimento/institucional, o WebSocket local continua habilitado.
+    if (!user || !getToken() || import.meta.env.VITE_HEOM_WS === 'false') return;
     let socket: WebSocket | null = null;
     let retry: number | undefined;
     let disposed = false;
