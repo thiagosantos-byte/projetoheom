@@ -1,6 +1,6 @@
 {
   "name": "heom-plataforma",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "workspaces": [
     "apps/api",
@@ -10,7 +10,7 @@
     "dev": "tsx watch apps/api/src/demo-server.ts",
     "build": "npm run build -w @heom/api && npm run build -w @heom/web",
     "typecheck": "npm run typecheck -w @heom/api && npm run typecheck -w @heom/web",
-    "test": "npm run test -w @heom/api",
+    "test": "npm run test -w @heom/api && tsx --test apps/web/tests/asset-validation.test.ts apps/web/tests/image-validation.test.ts apps/web/tests/plate-ocr.test.ts apps/web/tests/qr-code.test.ts apps/web/tests/qr-generation.test.ts",
     "start": "node scripts/start-production.mjs",
     "start:demo": "node scripts/start-production.mjs",
     "db:migrate": "npm run db:migrate -w @heom/api",

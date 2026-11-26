@@ -13,7 +13,7 @@ import { canTransitionMovement, trackingStatusForObservation } from './domain.js
 import { parseInventoryCsv, findCsvDuplicates, type InventoryCsvRow } from './csv.js';
 import { compareDifferenceHash, similarityLabel } from './visual.js';
 import { DEMO_PROFILE_DEFINITIONS } from './demo-accounts.js';
-import { photoUpload, csvUpload, maxAssetPhotoMb, saveAssetPhoto, readStoredPhoto, deleteStoredPhoto, runLocalOcr, makeQrSvg, type SavedPhoto } from './media.js';
+import { photoUpload, csvUpload, maxAssetPhotoMb, saveAssetPhoto, readStoredPhoto, deleteStoredPhoto, makeQrSvg, makeQrPng, type SavedPhoto } from './media.js';
 
 type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
 type AuthUser = { id: string; name: string; email?: string; role: Role };
@@ -22,7 +22,7 @@ type Department = { id: string; code: string; name: string; description: string;
 type Room = { id: string; code: string; name: string; departmentId: string; departmentName: string; floorLabel: string; isRestricted: boolean; dataOrigin: string; mapX: number; mapY: number };
 type Asset = {
   id: string; assetNumber: string; officialPropertyNumber: string | null; name: string; category: string; description: string | null;
-  manufacturer: string | null; model: string | null; serialNumber: string | null; departmentId: string | null; roomId: string | null;
+  manufacturer: string | null; model: string | null; serialNumber: string | null; reference?: string | null; departmentId: string | null; roomId: string | null;
   operationalStatus: string; criticality: string; trackingStatus: string; trackingTagId: string | null; lastDetectedAt: string | null; qrCode?: string;
   dataOrigin: string; archivedAt: string | null; createdAt: string; updatedAt: string;
 };
@@ -139,7 +139,7 @@ async function createInitialStore(): Promise<Store> {
   const assets: Asset[] = assetSeeds.map(([assetNumber, name, category, deptCode, roomCode, trackingTagId, operationalStatus]) => ({
     id: stableIdFromKey(`ASSET:${assetNumber}`), assetNumber, officialPropertyNumber: null, name, category,
     description: 'Registro fictício para demonstração. Não representa patrimônio oficial do HEOM.',
-    manufacturer: null, model: null, serialNumber: null, departmentId: departmentId(deptCode), roomId: roomId(roomCode),
+    manufacturer: null, model: null, serialNumber: null, reference: null, departmentId: departmentId(deptCode), roomId: roomId(roomCode),
     operationalStatus, criticality: operationalStatus === 'EM_MANUTENCAO' ? 'ALTA' : 'MEDIA', trackingStatus: 'ULTIMA_LOCALIZACAO',
     trackingTagId, lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now()
   }));
@@ -360,13 +360,13 @@ app.get('/api/assets/:id', authenticate, (req, res) => {
 const assetSchema = z.object({
   assetNumber: z.string().trim().min(2).max(80), officialPropertyNumber: z.string().trim().max(100).optional().nullable(),
   name: z.string().trim().min(2).max(180), category: z.string().trim().min(2).max(100), description: z.string().max(2000).optional().nullable(),
-  manufacturer: z.string().trim().max(140).optional().nullable(), model: z.string().trim().max(140).optional().nullable(), serialNumber: z.string().trim().max(140).optional().nullable(),
-  departmentId: z.string().uuid().optional().nullable(), roomId: z.string().uuid().optional().nullable(),
+  manufacturer: z.string().trim().max(140).optional().nullable(), model: z.string().trim().max(140).optional().nullable(), serialNumber: z.string().trim().max(140).optional().nullable(), reference: z.string().trim().max(140).optional().nullable(),
+  departmentId: z.string().uuid(), roomId: z.string().uuid().optional().nullable(),
   operationalStatus: z.enum(['EM_OPERACAO', 'INDISPONIVEL', 'EM_MANUTENCAO', 'BAIXADO']).default('EM_OPERACAO'),
   criticality: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'CRITICA']).default('MEDIA'), trackingTagId: z.string().trim().max(140).optional().nullable()
 });
 function validateAssetReferences(departmentId: string | null | undefined, roomId: string | null | undefined) {
-  if (roomId && !departmentId) return 'Selecione o setor antes de vincular um ambiente.';
+  if (!departmentId) return 'O setor é obrigatório para cadastrar ou atualizar um equipamento.';
   if (roomId && !store.rooms.some((room) => room.id === roomId && room.departmentId === departmentId)) return 'O ambiente selecionado não pertence ao setor informado.';
   if (departmentId && !store.departments.some((department) => department.id === departmentId && department.active)) return 'O setor selecionado não foi encontrado.';
   return null;
@@ -386,7 +386,7 @@ app.post('/api/assets', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'),
   ));
   if (duplicate) return res.status(409).json({ error: 'Possível duplicidade: patrimônio, número de série, identificação interna ou etiqueta já cadastrados.' });
   const createdId = uuid();
-  const created: Asset = { id: createdId, qrCode: `HEOM-ASSET:${createdId}`, ...asset, officialPropertyNumber: asset.officialPropertyNumber || null, description: asset.description || null, manufacturer: asset.manufacturer || null, model: asset.model || null, serialNumber: asset.serialNumber || null, departmentId: asset.departmentId || null, roomId: asset.roomId || null, trackingTagId: asset.trackingTagId || null, trackingStatus: 'RASTREAMENTO_DESATIVADO', lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now() };
+  const created: Asset = { id: createdId, qrCode: `HEOM-ASSET:${createdId}`, ...asset, officialPropertyNumber: asset.officialPropertyNumber || null, description: asset.description || null, manufacturer: asset.manufacturer || null, model: asset.model || null, serialNumber: asset.serialNumber || null, reference: asset.reference || null, departmentId: asset.departmentId || null, roomId: asset.roomId || null, trackingTagId: asset.trackingTagId || null, trackingStatus: 'RASTREAMENTO_DESATIVADO', lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now() };
   store.assets.unshift(created);
   await audit(req.user!.id, 'EQUIPAMENTO_CADASTRADO', 'ASSET', created.id, { assetNumber: created.assetNumber });
   broadcast('asset.created', { id: created.id, assetNumber: created.assetNumber });
@@ -465,17 +465,8 @@ app.delete('/api/assets/:id/photos/:photoId', authenticate, allowRoles('ADMIN', 
   photo.archivedAt = now(); await persist(); await audit(req.user!.id, 'FOTOGRAFIA_EQUIPAMENTO_REMOVIDA', 'ASSET', id, { photoId });
   return res.json({ message: 'Fotografia removida. O histórico de auditoria foi preservado.' });
 });
-app.post('/api/assets/:id/photos/:photoId/ocr', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'), async (req, res) => {
-  if (process.env.VERCEL === '1') return res.status(501).json({ error: 'OCR Tesseract depende de executável nativo indisponível na Function. Utilize a transcrição manual na interface.' });
-  const id = routeId(req); const photoId = typeof req.params.photoId === 'string' ? req.params.photoId : '';
-  const photo = store.assetPhotos.find((item) => item.id === photoId && item.assetId === id && !item.archivedAt);
-  if (!photo) return res.status(404).json({ error: 'Fotografia não encontrada.' });
-  try {
-    const result = await runLocalOcr(photo.relativePath);
-    const record: OcrRecord = { id: uuid(), assetId: id!, photoId, status: result.status, rawText: result.rawText, fields: result.fields, confidence: result.confidence, reviewStatus: 'AGUARDANDO_REVISAO', createdAt: now() };
-    store.ocrResults.unshift(record); await persist(); await audit(req.user!.id, 'OCR_LOCAL_EXECUTADO', 'ASSET', id, { photoId, status: result.status });
-    return res.json({ data: record, message: result.message });
-  } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : 'Falha no OCR local.' }); }
+app.post('/api/assets/:id/photos/:photoId/ocr', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'), (_req, res) => {
+  return res.status(410).json({ error: 'Esta rota de OCR no servidor foi descontinuada. O frontend executa o reconhecimento no navegador por meio do módulo compartilhado plate-ocr.ts; a fotografia não deve ser enviada a um serviço de OCR.' });
 });
 app.get('/api/assets/:id/ocr', authenticate, (req, res) => {
   const id = routeId(req); if (!id) return res.status(400).json({ error: 'Identificador inválido.' });
@@ -520,6 +511,13 @@ app.get('/api/assets/:id/qr.svg', authenticate, async (req, res) => {
   try { const svg = await makeQrSvg(asset.qrCode || `HEOM-ASSET:${asset.id}`); res.type('image/svg+xml').setHeader('Cache-Control', 'private, max-age=300'); return res.send(svg); }
   catch { return res.status(500).json({ error: 'Não foi possível gerar o QR Code.' }); }
 });
+app.get('/api/assets/:id/qr.png', authenticate, async (req, res) => {
+  const id = routeId(req);
+  const asset = store.assets.find((item) => item.id === id && !item.archivedAt);
+  if (!asset) return res.status(404).json({ error: 'Equipamento não encontrado.' });
+  try { const png = await makeQrPng(asset.qrCode || `HEOM-ASSET:${asset.id}`); res.type('png').setHeader('Cache-Control', 'private, max-age=300'); return res.send(png); }
+  catch { return res.status(500).json({ error: 'Não foi possível gerar o QR Code PNG.' }); }
+});
 
 // Ordens de serviço e manutenção, com histórico preservado.
 app.get('/api/maintenance', authenticate, (req, res) => {
@@ -552,15 +550,15 @@ app.patch('/api/maintenance/:id/status', authenticate, allowRoles('ADMIN', 'GEST
   return res.json({ data: order, message: 'Ordem de serviço atualizada.' });
 });
 app.get('/api/reports/inventory.csv', authenticate, async (_req, res) => {
-  const columns = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Setor','Ambiente','Situação','Criticidade','Origem'];
+  const columns = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Referência','Setor','Ambiente','Situação','Criticidade','Origem'];
   const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g,'""')}"`;
-  const rows = store.assets.filter((asset) => !asset.archivedAt).map((asset) => [asset.assetNumber,asset.name,asset.category,asset.manufacturer,asset.model,asset.serialNumber,store.departments.find((d)=>d.id===asset.departmentId)?.name,store.rooms.find((r)=>r.id===asset.roomId)?.name,asset.operationalStatus,asset.criticality,asset.dataOrigin]);
+  const rows = store.assets.filter((asset) => !asset.archivedAt).map((asset) => [asset.assetNumber,asset.name,asset.category,asset.manufacturer,asset.model,asset.serialNumber,asset.reference,store.departments.find((d)=>d.id===asset.departmentId)?.name,store.rooms.find((r)=>r.id===asset.roomId)?.name,asset.operationalStatus,asset.criticality,asset.dataOrigin]);
   const csv = '\ufeff' + [columns, ...rows].map((row) => row.map(escape).join(';')).join('\r\n');
   res.setHeader('Content-Type','text/csv; charset=utf-8'); res.setHeader('Content-Disposition','attachment; filename="inventario-heom.csv"'); return res.send(csv);
 });
 
 app.get('/api/imports/inventory-template.csv', authenticate, (_req, res) => {
-  const headers = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Patrimônio oficial','Setor','Ambiente','Situação','Criticidade'];
+  const headers = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Referência','Patrimônio oficial','Setor','Ambiente','Situação','Criticidade'];
   const csv = '\ufeff' + headers.map((value) => `"${value.replace(/"/g, '""')}"`).join(';') + '\r\n';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="modelo-importacao-heom.csv"');
@@ -593,7 +591,7 @@ app.post('/api/imports/inventory-csv', authenticate, allowRoles('ADMIN', 'GESTOR
     if (errors.length) issues.push({ row: row.rowNumber, errors });
     else {
       const id = uuid();
-      imported.push({ id, qrCode: `HEOM-ASSET:${id}`, assetNumber: row.assetNumber, officialPropertyNumber: row.officialPropertyNumber, name: row.name, category: row.category, description: 'Importado de CSV no ambiente local de demonstração.', manufacturer: row.manufacturer, model: row.model, serialNumber: row.serialNumber, departmentId: department?.id || null, roomId: room?.id || null, operationalStatus: row.operationalStatus, criticality: row.criticality, trackingStatus: 'RASTREAMENTO_DESATIVADO', trackingTagId: null, lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now() });
+      imported.push({ id, qrCode: `HEOM-ASSET:${id}`, assetNumber: row.assetNumber, officialPropertyNumber: row.officialPropertyNumber, name: row.name, category: row.category, description: 'Importado de CSV no ambiente local de demonstração.', manufacturer: row.manufacturer, model: row.model, serialNumber: row.serialNumber, reference: row.reference, departmentId: department?.id || null, roomId: room?.id || null, operationalStatus: row.operationalStatus, criticality: row.criticality, trackingStatus: 'RASTREAMENTO_DESATIVADO', trackingTagId: null, lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now() });
     }
   }
   if (issues.length) return res.status(422).json({ error: 'A importação não foi aplicada. Corrija as linhas informadas e envie novamente.', data: { totalRows: rows.length, imported: 0, errors: issues } });

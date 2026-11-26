@@ -14,7 +14,7 @@ import { pool } from './db.js';
 import { canTransitionMovement, trackingStatusForObservation } from './domain.js';
 import { parseInventoryCsv, findCsvDuplicates, type InventoryCsvRow } from './csv.js';
 import { compareDifferenceHash, similarityLabel } from './visual.js';
-import { photoUpload, csvUpload, maxAssetPhotoMb, saveAssetPhoto, readStoredPhoto, deleteStoredPhoto, runLocalOcr, makeQrSvg } from './media.js';
+import { photoUpload, csvUpload, maxAssetPhotoMb, saveAssetPhoto, readStoredPhoto, deleteStoredPhoto, makeQrSvg, makeQrPng } from './media.js';
 
 type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
 type AuthUser = { id: string; name: string; email?: string; role: Role };
@@ -120,7 +120,8 @@ const assetSchema = z.object({
   manufacturer: z.string().trim().max(140).optional().nullable(),
   model: z.string().trim().max(140).optional().nullable(),
   serialNumber: z.string().trim().max(140).optional().nullable(),
-  departmentId: uuidSchema.optional().nullable(),
+  reference: z.string().trim().max(140).optional().nullable(),
+  departmentId: uuidSchema,
   roomId: uuidSchema.optional().nullable(),
   operationalStatus: z.enum(['EM_OPERACAO', 'INDISPONIVEL', 'EM_MANUTENCAO', 'BAIXADO']).default('EM_OPERACAO'),
   criticality: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'CRITICA']).default('MEDIA'),
@@ -221,6 +222,7 @@ app.get('/api/assets', authenticate, async (req, res) => {
       OR COALESCE(a.serial_number,'') ILIKE $${values.length}
       OR COALESCE(a.manufacturer,'') ILIKE $${values.length}
       OR COALESCE(a.model,'') ILIKE $${values.length}
+      OR COALESCE(a.reference,'') ILIKE $${values.length}
       OR COALESCE(a.category,'') ILIKE $${values.length}
       OR COALESCE(a.tracking_tag_id,'') ILIKE $${values.length})`);
   }
@@ -229,7 +231,7 @@ app.get('/api/assets', authenticate, async (req, res) => {
   const departmentId = String(req.query.departmentId || '');
   if (departmentId && z.string().uuid().safeParse(departmentId).success) { values.push(departmentId); conditions.push(`a.department_id = $${values.length}`); }
   const result = await pool.query(`SELECT a.id, a.asset_number AS "assetNumber", a.official_property_number AS "officialPropertyNumber",
-    a.name, a.category, a.description, a.manufacturer, a.model, a.serial_number AS "serialNumber", a.room_id AS "roomId", a.operational_status AS "operationalStatus",
+    a.name, a.category, a.description, a.manufacturer, a.model, a.serial_number AS "serialNumber", a.reference, a.room_id AS "roomId", a.operational_status AS "operationalStatus",
     a.criticality, a.tracking_status AS "trackingStatus", a.tracking_tag_id AS "trackingTagId", a.last_detected_at AS "lastDetectedAt",
     a.data_origin AS "dataOrigin", d.name AS "departmentName", d.id AS "departmentId", r.name AS "roomName"
     FROM assets a LEFT JOIN departments d ON d.id=a.department_id LEFT JOIN rooms r ON r.id=a.room_id
@@ -256,6 +258,8 @@ app.post('/api/assets', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'),
   if (!parsed.success) return res.status(400).json({ error: 'Revise os campos do equipamento.', details: parsed.error.flatten() });
   const a = parsed.data;
   if (await hasDuplicateAsset(a)) return res.status(409).json({ error: 'Possível duplicidade: patrimônio, número de série ou etiqueta já cadastrados.' });
+  const department = await pool.query('SELECT 1 FROM departments WHERE id=$1 AND active=true', [a.departmentId]);
+  if (!department.rowCount) return res.status(400).json({ error: 'O setor selecionado não foi encontrado ou está inativo.' });
   if (a.roomId && !a.departmentId) return res.status(400).json({ error: 'Selecione o setor antes de vincular um ambiente.' });
   if (a.departmentId && a.roomId) {
     const room = await pool.query('SELECT 1 FROM rooms WHERE id=$1 AND department_id=$2', [a.roomId, a.departmentId]);
@@ -265,10 +269,10 @@ app.post('/api/assets', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'),
     const assetId = crypto.randomUUID();
     const qrCode = `HEOM-ASSET:${assetId}`;
     const result = await pool.query(`INSERT INTO assets(id, asset_number, official_property_number, name, category, description,
-      manufacturer, model, serial_number, department_id, room_id, operational_status, criticality, tracking_tag_id, qr_code, data_origin)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'INSTITUCIONAL') RETURNING id`,
+      manufacturer, model, serial_number, reference, department_id, room_id, operational_status, criticality, tracking_tag_id, qr_code, data_origin)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'INSTITUCIONAL') RETURNING id`,
       [assetId, a.assetNumber, a.officialPropertyNumber || null, a.name, a.category, a.description || null, a.manufacturer || null,
-       a.model || null, a.serialNumber || null, a.departmentId || null, a.roomId || null, a.operationalStatus, a.criticality, a.trackingTagId || null, qrCode]);
+       a.model || null, a.serialNumber || null, a.reference || null, a.departmentId, a.roomId || null, a.operationalStatus, a.criticality, a.trackingTagId || null, qrCode]);
     const id = result.rows[0].id as string;
     await audit(req.user!.id, 'EQUIPAMENTO_CADASTRADO', 'ASSET', id, { assetNumber: a.assetNumber });
     broadcast('asset.created', { id, assetNumber: a.assetNumber });
@@ -286,6 +290,8 @@ app.put('/api/assets/:id', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR
   if (!parsed.success) return res.status(400).json({ error: 'Revise os campos do equipamento.', details: parsed.error.flatten() });
   const a = parsed.data;
   if (await hasDuplicateAsset(a, id)) return res.status(409).json({ error: 'Possível duplicidade: patrimônio, número de série ou etiqueta já cadastrados.' });
+  const department = await pool.query('SELECT 1 FROM departments WHERE id=$1 AND active=true', [a.departmentId]);
+  if (!department.rowCount) return res.status(400).json({ error: 'O setor selecionado não foi encontrado ou está inativo.' });
   if (a.roomId && !a.departmentId) return res.status(400).json({ error: 'Selecione o setor antes de vincular um ambiente.' });
   if (a.departmentId && a.roomId) {
     const room = await pool.query('SELECT 1 FROM rooms WHERE id=$1 AND department_id=$2', [a.roomId, a.departmentId]);
@@ -293,10 +299,10 @@ app.put('/api/assets/:id', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR
   }
   try {
     const result = await pool.query(`UPDATE assets SET asset_number=$1, official_property_number=$2, name=$3, category=$4,
-      description=$5, manufacturer=$6, model=$7, serial_number=$8, department_id=$9, room_id=$10, operational_status=$11,
-      criticality=$12, tracking_tag_id=$13, updated_at=NOW() WHERE id=$14 AND archived_at IS NULL RETURNING id`,
+      description=$5, manufacturer=$6, model=$7, serial_number=$8, reference=$9, department_id=$10, room_id=$11, operational_status=$12,
+      criticality=$13, tracking_tag_id=$14, updated_at=NOW() WHERE id=$15 AND archived_at IS NULL RETURNING id`,
       [a.assetNumber, a.officialPropertyNumber || null, a.name, a.category, a.description || null, a.manufacturer || null,
-       a.model || null, a.serialNumber || null, a.departmentId || null, a.roomId || null, a.operationalStatus, a.criticality, a.trackingTagId || null, id]);
+       a.model || null, a.serialNumber || null, a.reference || null, a.departmentId, a.roomId || null, a.operationalStatus, a.criticality, a.trackingTagId || null, id]);
     if (!result.rowCount) return res.status(404).json({ error: 'Equipamento não encontrado.' });
     await audit(req.user!.id, 'EQUIPAMENTO_ATUALIZADO', 'ASSET', id, { assetNumber: a.assetNumber });
     broadcast('asset.updated', { id });
@@ -353,16 +359,8 @@ app.delete('/api/assets/:id/photos/:photoId', authenticate, allowRoles('ADMIN', 
   await audit(req.user!.id, 'FOTOGRAFIA_EQUIPAMENTO_REMOVIDA', 'ASSET', id, { photoId });
   return res.json({ message: 'Fotografia removida. O histórico de auditoria foi preservado.' });
 });
-app.post('/api/assets/:id/photos/:photoId/ocr', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'), async (req, res) => {
-  const id = routeId(req); const photoId = typeof req.params.photoId === 'string' ? req.params.photoId : '';
-  const photo = await pool.query('SELECT relative_path FROM asset_photos WHERE id=$1 AND asset_id=$2 AND archived_at IS NULL', [photoId, id]);
-  if (!photo.rowCount) return res.status(404).json({ error: 'Fotografia não encontrada.' });
-  try {
-    const result = await runLocalOcr(photo.rows[0].relative_path);
-    const saved = await pool.query(`INSERT INTO asset_ocr_results(asset_id, photo_id, status, raw_text, extracted_fields, confidence) VALUES($1,$2,$3,$4,$5,$6) RETURNING id, status, raw_text AS "rawText", extracted_fields AS fields, confidence, review_status AS "reviewStatus", created_at AS "createdAt"`, [id, photoId, result.status, result.rawText, JSON.stringify(result.fields), result.confidence]);
-    await audit(req.user!.id, 'OCR_LOCAL_EXECUTADO', 'ASSET', id, { photoId, status: result.status });
-    return res.json({ data: saved.rows[0], message: result.message });
-  } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : 'Falha no OCR local.' }); }
+app.post('/api/assets/:id/photos/:photoId/ocr', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'), (_req, res) => {
+  return res.status(410).json({ error: 'O OCR no servidor foi descontinuado. Utilize o módulo compartilhado plate-ocr.ts no navegador; fotografias de plaquetas não são enviadas para um executável externo.' });
 });
 app.get('/api/assets/:id/ocr', authenticate, async (req, res) => {
   const id = routeId(req); if (!id || !uuidSchema.safeParse(id).success) return res.status(400).json({ error: 'Identificador inválido.' });
@@ -403,8 +401,15 @@ app.get('/api/assets/:id/qr.svg', authenticate, async (req, res) => {
   try { const svg = await makeQrSvg(result.rows[0].qr_code || `HEOM-ASSET:${result.rows[0].id}`); res.type('image/svg+xml').setHeader('Cache-Control', 'private, max-age=300'); return res.send(svg); }
   catch { return res.status(500).json({ error: 'Não foi possível gerar o QR Code.' }); }
 });
+app.get('/api/assets/:id/qr.png', authenticate, async (req, res) => {
+  const id = routeId(req);
+  const result = await pool.query('SELECT id, qr_code FROM assets WHERE id=$1 AND archived_at IS NULL', [id]);
+  if (!result.rowCount) return res.status(404).json({ error: 'Equipamento não encontrado.' });
+  try { const png = await makeQrPng(result.rows[0].qr_code || `HEOM-ASSET:${result.rows[0].id}`); res.type('png').setHeader('Cache-Control', 'private, max-age=300'); return res.send(png); }
+  catch { return res.status(500).json({ error: 'Não foi possível gerar o QR Code PNG.' }); }
+});
 app.get('/api/imports/inventory-template.csv', authenticate, (_req, res) => {
-  const headers = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Patrimônio oficial','Setor','Ambiente','Situação','Criticidade'];
+  const headers = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Referência','Patrimônio oficial','Setor','Ambiente','Situação','Criticidade'];
   const csv = '\ufeff' + headers.map((value) => `"${value.replace(/"/g, '""')}"`).join(';') + '\r\n';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="modelo-importacao-heom.csv"');
@@ -450,9 +455,9 @@ app.post('/api/imports/inventory-csv', authenticate, allowRoles('ADMIN','GESTOR'
     for (const item of mapped) {
       const row = item.row;
       await client.query(`WITH generated AS (SELECT gen_random_uuid() AS id)
-        INSERT INTO assets(id, asset_number, official_property_number, name, category, manufacturer, model, serial_number, department_id, room_id, operational_status, criticality, tracking_status, qr_code, data_origin)
-        SELECT generated.id,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'RASTREAMENTO_DESATIVADO','HEOM-ASSET:' || generated.id::text,'INSTITUCIONAL' FROM generated`,
-        [row.assetNumber,row.officialPropertyNumber,row.name,row.category,row.manufacturer,row.model,row.serialNumber,item.departmentId,item.roomId,row.operationalStatus,row.criticality]);
+        INSERT INTO assets(id, asset_number, official_property_number, name, category, manufacturer, model, serial_number, reference, department_id, room_id, operational_status, criticality, tracking_status, qr_code, data_origin)
+        SELECT generated.id,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'RASTREAMENTO_DESATIVADO','HEOM-ASSET:' || generated.id::text,'INSTITUCIONAL' FROM generated`,
+        [row.assetNumber,row.officialPropertyNumber,row.name,row.category,row.manufacturer,row.model,row.serialNumber,row.reference,item.departmentId,item.roomId,row.operationalStatus,row.criticality]);
     }
     await client.query(`INSERT INTO audit_logs(action,entity_type,entity_id,details) VALUES('INVENTARIO_IMPORTADO_CSV','IMPORT',NULL,$1)`, [JSON.stringify({ imported: mapped.length, fileName: req.file.originalname })]);
     await client.query('COMMIT');
@@ -488,10 +493,10 @@ app.patch('/api/maintenance/:id/status', authenticate, allowRoles('ADMIN','GESTO
   return res.json({ message: 'Ordem de serviço atualizada.' });
 });
 app.get('/api/reports/inventory.csv', authenticate, async (_req, res) => {
-  const result = await pool.query(`SELECT a.asset_number, a.name, a.category, a.manufacturer, a.model, a.serial_number, d.name AS department_name, r.name AS room_name, a.operational_status, a.criticality, a.data_origin FROM assets a LEFT JOIN departments d ON d.id=a.department_id LEFT JOIN rooms r ON r.id=a.room_id WHERE a.archived_at IS NULL ORDER BY a.asset_number`);
-  const columns = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Setor','Ambiente','Situação','Criticidade','Origem'];
+  const result = await pool.query(`SELECT a.asset_number, a.name, a.category, a.manufacturer, a.model, a.serial_number, a.reference, d.name AS department_name, r.name AS room_name, a.operational_status, a.criticality, a.data_origin FROM assets a LEFT JOIN departments d ON d.id=a.department_id LEFT JOIN rooms r ON r.id=a.room_id WHERE a.archived_at IS NULL ORDER BY a.asset_number`);
+  const columns = ['Patrimônio','Nome','Categoria','Fabricante','Modelo','Número de série','Referência','Setor','Ambiente','Situação','Criticidade','Origem'];
   const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g,'""')}"`;
-  const rows = result.rows.map((r) => [r.asset_number,r.name,r.category,r.manufacturer,r.model,r.serial_number,r.department_name,r.room_name,r.operational_status,r.criticality,r.data_origin]);
+  const rows = result.rows.map((r) => [r.asset_number,r.name,r.category,r.manufacturer,r.model,r.serial_number,r.reference,r.department_name,r.room_name,r.operational_status,r.criticality,r.data_origin]);
   res.setHeader('Content-Type','text/csv; charset=utf-8'); res.setHeader('Content-Disposition','attachment; filename="inventario-heom.csv"'); return res.send('\ufeff'+[columns,...rows].map((row)=>row.map(escape).join(';')).join('\r\n'));
 });
 

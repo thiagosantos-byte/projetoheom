@@ -1,26 +1,32 @@
 # HEOM — Hospital Equipment Operations Management
 
-**Versão 0.5.0 · Correção do armazenamento de fotografias · Demonstração institucional · React + TypeScript + Express + Vercel**
+**Versão 0.5.1 · OCR compartilhado no navegador · QR SVG/PNG e leitura ZXing · Demonstração institucional · React + TypeScript + Express + Vercel**
 
 O HEOM nesta distribuição é uma aplicação integrada para demonstração de gestão de equipamentos hospitalares. Interface e API compartilham o mesmo projeto e, localmente, o mesmo processo HTTP. A demonstração pública abre sem login, e-mail, senha, criação de conta, `.env`, PostgreSQL, MQTT, Docker ou outro serviço externo.
 
 > **Importante:** todos os registros são fictícios. Os quatro perfis são personagens para avaliar permissões de interface, não autenticação ou segurança de produção. Os dados criados ficam no armazenamento do navegador que os criou; visitantes diferentes não compartilham alterações. Não cadastrar dados de pacientes, profissionais, equipamentos reais ou patrimônio institucional.
 
+## Correção 0.5.1 — OCR, cadastro e identidade digital
+
+- OCR único em `apps/web/src/lib/plate-ocr.ts`, utilizado tanto no formulário de cadastro quanto no Centro de Identificação. O reconhecimento acontece dentro do navegador; a fotografia não é enviada para serviço externo de OCR.
+- Pré-processamento local: orientação EXIF quando suportada, redimensionamento, tons de cinza, contraste, nitidez, binarização adaptativa por Otsu, segmentação alternativa e tentativas adicionais de rotação/inclinação.
+- Extração assistida de fabricante, modelo (inclusive composto), série, referência e patrimônio/tombamento. Rótulos em linha separada são aceitos. O texto bruto é preservado e campos devem ser revisados por uma pessoa.
+- Diagnóstico do OCR: carga do motor/idiomas, reconhecimento, texto bruto, status específico, confiança média do mecanismo (não por campo) e mensagens diferentes para texto vazio, nenhum campo extraído e falha de motor/idioma/imagem.
+- OCR Tesseract.js 6 e modelos `por+eng` são obtidos sob demanda via CDN; a primeira utilização requer internet. A imagem não é transmitida para esses hosts.
+- Setor é obrigatório no cadastro e na importação CSV; a sala/ambiente precisa pertencer ao setor selecionado.
+- Após falha no anexo da foto, o identificador do equipamento permanece pendente no formulário. A próxima tentativa atualiza esse cadastro e não cria um segundo ativo.
+- QR Code com identificador estável `HEOM-ASSET:<UUID>`, correção de erro alta e margem de segurança; visualização, download SVG/PNG e etiqueta de 70 × 45 mm em janela própria de impressão.
+- Leitura QR com `@zxing/browser` carregado sob demanda via unpkg, seleção de câmera, prioridade à câmera traseira, alternativa manual/scanner USB e liberação das trilhas da câmera ao encerrar.
+- Validação do tipo real do arquivo, MIME, limite de 12 MB e dimensões; operações de foto e cadastro no adaptador local tentam evitar metadados/arquivos parcialmente gravados.
+
 ## Correção 0.4.1 — fotografias
 
-- Transações do IndexedDB agora encerram a conexão corretamente em sucesso e falha.
+- Transações do IndexedDB encerram a conexão em sucesso e falha.
 - Mensagens específicas para armazenamento bloqueado, falta de espaço, conexão ocupada e formato incompatível.
-- Busca visual valida formato e tamanho antes da comparação.
 - JPG, PNG e WEBP até 12 MB são aceitos; HEIC/HEIF precisa ser convertido para um desses formatos.
-- As imagens continuam armazenadas no navegador que as enviou, sem depender do filesystem temporário da Vercel.
+- As imagens ficam no navegador que as enviou, sem depender do filesystem temporário da Vercel.
 
-## Cadastro assistido por fotografia — 0.5.0
-
-O formulário de novo equipamento agora oferece leitura OCR da plaqueta diretamente no navegador. O reconhecimento tenta identificar fabricante, modelo, número de série e número patrimonial oficial. Os valores reconhecidos são preenchidos para conferência e podem ser corrigidos antes de salvar. A fotografia original é anexada ao cadastro como imagem do tipo PLAQUETA.
-
-O OCR utiliza Tesseract.js carregado sob demanda e baixa os modelos de idioma português/inglês na primeira utilização. É necessária conexão à internet para carregar o mecanismo e os modelos; a imagem é processada no navegador e não é enviada ao serviço de OCR. O resultado depende da nitidez, iluminação, ângulo e estado da plaqueta.
-
-O número interno HEOM, nome do equipamento, categoria, setor e ambiente continuam exigindo preenchimento ou confirmação pelo operador. O OCR não deve ser tratado como fonte definitiva: a conferência humana é obrigatória antes de salvar.
+**Importante:** OCR e similaridade visual são mecanismos auxiliares, não validação clínica ou patrimonial automática. Confirme todos os valores e não cadastre dados reais na demonstração.
 
 ## Iniciar localmente
 
@@ -29,7 +35,7 @@ Requisitos: Node.js 22.x e npm 10 ou superior.
 Na pasta `heom-platform`:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -58,7 +64,7 @@ O repositório é um único projeto Vercel. Configure:
 | Root Directory | `heom-platform` |
 | Framework Preset | Vite |
 | Node.js | 22.x |
-| Install Command | `npm install` |
+| Install Command | `npm ci` |
 | Build Command | `npm run build` |
 | Output Directory | `apps/web/dist` |
 
@@ -97,8 +103,8 @@ Esta escolha mantém as alterações após atualizar/reabrir o navegador sem exi
 - Inventário com cadastro, edição, busca, filtros e arquivamento lógico.
 - Identificação por fotografia: seleção/captura no navegador, pré-visualização, associação ao equipamento, galeria e remoção.
 - Busca visual aproximada por dHash de 64 bits, calculada em canvas no navegador. É triagem por aparência, não reconhecimento por IA e não confirma identidade.
-- Leitura de plaquetas: fotografia e campos manuais revisáveis para fabricante, modelo e série. O OCR automático Tesseract não é embarcado na Function Vercel; quando indisponível, a interface informa a limitação e oferece transcrição manual antes de atualizar o cadastro.
-- QR Code SVG gerado localmente, vinculado ao UUID demonstrativo do equipamento. A leitura usa `BarcodeDetector` quando suportado; entrada manual/leitor USB é alternativa.
+- Leitura de plaquetas: OCR Tesseract.js compartilhado no navegador para fabricante, modelo, série, referência e patrimônio oficial, com texto bruto e revisão humana. A primeira leitura exige baixar motor e idiomas de CDN; a imagem permanece no dispositivo.
+- QR Code SVG/PNG gerado com `qrcode`, vinculado ao UUID demonstrativo do equipamento. A leitura por câmera usa `@zxing/browser` carregado sob demanda de unpkg, sem depender de `BarcodeDetector`; entrada manual/leitor USB continua disponível.
 - Planta de setores e ambientes ilustrativos, com coordenadas esquemáticas. Não representa planta arquitetônica oficial nem localização física em tempo real.
 - Movimentações com solicitação, aprovação, rejeição e conclusão conforme perfil.
 - Manutenções preventivas/corretivas, status e efeito demonstrativo na disponibilidade do equipamento.
@@ -109,7 +115,7 @@ Esta escolha mantém as alterações após atualizar/reabrir o navegador sem exi
 
 - Rastreamento é um simulador local; não existe gateway BLE/RFID/UWB físico conectado.
 - RSSI e setores de localização são dados demonstrativos; não são coordenadas ou medições reais.
-- OCR automático depende de Tesseract e idiomas no host; a versão Vercel fornece fluxo manual de revisão.
+- O OCR público não depende de executável Tesseract na Vercel: roda no navegador com Tesseract.js e dados de idioma obtidos sob demanda via CDN. Sem conexão na primeira carga do mecanismo/idiomas, a leitura pode falhar e deve ser informada ao operador.
 - Similaridade visual é dHash; não utiliza modelo de aprendizado profundo.
 - QR por câmera depende do suporte do navegador e de permissão de câmera em contexto seguro (localhost/HTTPS).
 - A planta é esquemática e precisa ser substituída por desenho validado antes de qualquer uso operacional.

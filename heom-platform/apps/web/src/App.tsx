@@ -11,6 +11,7 @@ import type { Alert, Asset, DashboardData, Department, Movement, Room, User } fr
 import IdentityCenter from './components/IdentityCenter';
 import MaintenanceCenter from './components/MaintenanceCenter';
 import ReportsCenter from './components/ReportsCenter';
+import { recognizePlateImage, type PlateOcrFields } from './lib/plate-ocr';
 
 type Page = 'overview' | 'assets' | 'identification' | 'map' | 'movements' | 'alerts' | 'maintenance' | 'reports' | 'admin';
 type Health = { status: string; database: string; mqtt: string; mode: string; persistence?: string; persistenceStatus?: string; tracking?: string; message?: string };
@@ -89,6 +90,7 @@ function App() {
   const [alertStatus, setAlertStatus] = useState('');
   const [modal, setModal] = useState<'asset' | 'movement' | null>(null);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [pendingPhotoAssetId, setPendingPhotoAssetId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [clock, setClock] = useState(new Date());
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -220,36 +222,61 @@ function App() {
   }
 
   async function saveAsset(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true);
+    event.preventDefault();
     const form = new FormData(event.currentTarget);
     const body = {
-      assetNumber: String(form.get('assetNumber') || ''), officialPropertyNumber: String(form.get('officialPropertyNumber') || '') || null,
-      name: String(form.get('name') || ''), category: String(form.get('category') || ''), manufacturer: String(form.get('manufacturer') || '') || null,
-      model: String(form.get('model') || '') || null, serialNumber: String(form.get('serialNumber') || '') || null,
-      departmentId: String(form.get('departmentId') || '') || null, roomId: String(form.get('roomId') || '') || null,
-      operationalStatus: String(form.get('operationalStatus') || 'EM_OPERACAO'), criticality: String(form.get('criticality') || 'MEDIA'),
-      trackingTagId: String(form.get('trackingTagId') || '') || null, description: String(form.get('description') || '') || null
+      assetNumber: String(form.get('assetNumber') || '').trim(),
+      officialPropertyNumber: String(form.get('officialPropertyNumber') || '').trim() || null,
+      reference: String(form.get('reference') || '').trim() || null,
+      name: String(form.get('name') || '').trim(),
+      category: String(form.get('category') || '').trim(),
+      manufacturer: String(form.get('manufacturer') || '').trim() || null,
+      model: String(form.get('model') || '').trim() || null,
+      serialNumber: String(form.get('serialNumber') || '').trim() || null,
+      departmentId: String(form.get('departmentId') || '').trim(),
+      roomId: String(form.get('roomId') || '').trim() || null,
+      operationalStatus: String(form.get('operationalStatus') || 'EM_OPERACAO'),
+      criticality: String(form.get('criticality') || 'MEDIA'),
+      trackingTagId: String(form.get('trackingTagId') || '').trim() || null,
+      description: String(form.get('description') || '').trim() || null
     };
+    if (!body.departmentId) { show('Selecione o setor do equipamento antes de salvar.', 'error'); return; }
+    if (body.roomId && !rooms.some((room) => room.id === body.roomId && room.departmentId === body.departmentId)) {
+      show('O ambiente selecionado não pertence ao setor escolhido. Selecione novamente o ambiente.', 'error'); return;
+    }
+    setBusy(true);
     try {
       const photo = form.get('assetPhoto');
-      let savedAssetId = editingAsset?.id || '';
-      if (editingAsset) {
-        await api(`/assets/${editingAsset.id}`, { method: 'PUT', body: JSON.stringify(body) });
+      let savedAssetId = pendingPhotoAssetId || editingAsset?.id || '';
+      let savedAsset: Asset | null = editingAsset;
+      if (editingAsset || pendingPhotoAssetId) {
+        await api(`/assets/${savedAssetId}`, { method: 'PUT', body: JSON.stringify(body) });
       } else {
         const created = await api<{ id?: string; data?: Asset }>('/assets', { method: 'POST', body: JSON.stringify(body) });
+        savedAsset = created.data || null;
         savedAssetId = created.data?.id || created.id || '';
       }
-      let photoWarning = '';
-      if (photo instanceof File && photo.size > 0 && savedAssetId) {
+      if (!savedAssetId) {
+        throw new Error('A API confirmou o cadastro, mas não retornou o identificador do equipamento. Não repita o cadastro: atualize o inventário e confira se o registro já foi criado.');
+      }
+      if (photo instanceof File && photo.size > 0) {
         try {
           const photoBody = new FormData(); photoBody.append('photo', photo); photoBody.append('imageRole', 'PLAQUETA');
           await api(`/assets/${savedAssetId}/photos`, { method: 'POST', body: photoBody });
         } catch (photoError) {
-          photoWarning = photoError instanceof Error ? ` O equipamento foi cadastrado, mas a foto não foi anexada: ${photoError.message}` : ' O equipamento foi cadastrado, mas não foi possível anexar a foto.';
+          setPendingPhotoAssetId(savedAssetId);
+          if (!savedAsset) {
+            try { savedAsset = (await api<{ data: Asset }>(`/assets/${savedAssetId}`)).data; } catch { /* o identificador fica preservado para não duplicar o registro na próxima tentativa */ }
+          }
+          if (savedAsset) setEditingAsset(savedAsset);
+          await loadPage();
+          show(`O equipamento foi salvo com sucesso, mas a fotografia não foi anexada: ${photoError instanceof Error ? photoError.message : 'falha no armazenamento'}. O cadastro permanece aberto; tente salvar novamente para anexar a mesma foto sem criar outro equipamento.`, 'error');
+          return;
         }
       }
-      show(editingAsset ? 'Cadastro atualizado.' : `Equipamento cadastrado.${photoWarning}`, photoWarning ? 'error' : 'success');
-      setModal(null); setEditingAsset(null); await loadPage();
+      const hadPhoto = photo instanceof File && photo.size > 0;
+      show(editingAsset ? 'Cadastro atualizado.' : hadPhoto ? 'Equipamento cadastrado e fotografia anexada.' : 'Equipamento cadastrado.');
+      setModal(null); setEditingAsset(null); setPendingPhotoAssetId(null); await loadPage();
     } catch (err) { show(err instanceof Error ? err.message : 'Não foi possível salvar o equipamento.', 'error'); }
     finally { setBusy(false); }
   }
@@ -348,7 +375,7 @@ function App() {
 
     <main className="main-content">
       {page === 'overview' && <Overview data={dashboard} loading={!dashboard} onNavigate={setPage} onAssetFilter={(filter) => { setAssetQuery(''); setAssetStatus(filter); setPage('assets'); }} onRefresh={refreshAll} />}
-      {page === 'assets' && <Inventory assets={assets} departments={departments} canEdit={user.role !== 'CONSULTA'} canArchive={user.role === 'ADMIN' || user.role === 'GESTOR'} query={assetQuery} setQuery={setAssetQuery} status={assetStatus} setStatus={setAssetStatus} onAdd={() => { setEditingAsset(null); setModal('asset'); }} onEdit={(asset) => { setEditingAsset(asset); setModal('asset'); }} onRefresh={() => void loadPage()} onToast={show} />}
+      {page === 'assets' && <Inventory assets={assets} departments={departments} canEdit={user.role !== 'CONSULTA'} canArchive={user.role === 'ADMIN' || user.role === 'GESTOR'} query={assetQuery} setQuery={setAssetQuery} status={assetStatus} setStatus={setAssetStatus} onAdd={() => { setEditingAsset(null); setPendingPhotoAssetId(null); setModal('asset'); }} onEdit={(asset) => { setPendingPhotoAssetId(null); setEditingAsset(asset); setModal('asset'); }} onRefresh={() => void loadPage()} onToast={show} />}
       {page === 'identification' && <IdentityCenter assets={assets} canManage={user.role !== 'CONSULTA'} canArchive={user.role === 'ADMIN' || user.role === 'GESTOR'} onToast={show} onRefresh={() => void loadPage()} />}
       {page === 'map' && <FloorPlan rooms={rooms} />}
       {page === 'movements' && <Movements movements={movements} canRequest={user.role !== 'CONSULTA'} canManage={user.role === 'ADMIN' || user.role === 'GESTOR'} onAdd={() => setModal('movement')} onUpdate={updateMovement} />}
@@ -358,9 +385,9 @@ function App() {
       {page === 'admin' && <Administration gateways={gateways} assets={assets} health={health} user={user} onSimulate={simulateMovement} onRefresh={() => void loadPage()} onToast={show} />}
     </main>
 
-    <footer className="app-footer"><span>HEOM · Plataforma de Inteligência Patrimonial</span><span><ShieldCheck size={13} /> Demonstração local-first · America/Bahia</span><span>Versão 0.5.0 — Cadastro assistido por fotografia</span></footer>
+    <footer className="app-footer"><span>HEOM · Plataforma de Inteligência Patrimonial</span><span><ShieldCheck size={13} /> Demonstração local-first · America/Bahia</span><span>Versão 0.5.1 — OCR e identificação patrimonial</span></footer>
 
-    {modal === 'asset' && <Modal title={editingAsset ? 'Editar equipamento' : 'Cadastrar equipamento'} description={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Os dados serão salvos localmente neste navegador (localStorage/IndexedDB).' : health ? 'Os dados serão persistidos no PostgreSQL da infraestrutura local.' : 'Identificando o mecanismo de persistência do ambiente…'} onClose={() => { setModal(null); setEditingAsset(null); }} wide><AssetForm asset={editingAsset} departments={departments} rooms={rooms} busy={busy} onSubmit={saveAsset} onCancel={() => { setModal(null); setEditingAsset(null); }} /></Modal>}
+    {modal === 'asset' && <Modal title={editingAsset ? 'Editar equipamento' : 'Cadastrar equipamento'} description={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Os dados serão salvos localmente neste navegador (localStorage/IndexedDB).' : health ? 'Os dados serão persistidos no PostgreSQL da infraestrutura local.' : 'Identificando o mecanismo de persistência do ambiente…'} onClose={() => { setModal(null); setEditingAsset(null); setPendingPhotoAssetId(null); }} wide><AssetForm asset={editingAsset} departments={departments} rooms={rooms} busy={busy} onSubmit={saveAsset} onCancel={() => { setModal(null); setEditingAsset(null); setPendingPhotoAssetId(null); }} /></Modal>}
     {modal === 'movement' && <Modal title="Solicitar movimentação" description="A movimentação ficará pendente até a aprovação de um gestor autorizado." onClose={() => setModal(null)}><MovementForm assets={assets} departments={departments} rooms={rooms} busy={busy} onSubmit={saveMovement} /></Modal>}
     {toast && <Toast toast={toast} />}
   </div>;
@@ -466,74 +493,20 @@ function Inventory({ assets, departments, canEdit, canArchive, query, setQuery, 
   </>;
 }
 
-type PlateFields = { officialPropertyNumber: string; manufacturer: string; model: string; serialNumber: string };
-type TesseractWorker = { recognize: (image: Blob) => Promise<{ data: { text: string } }>; terminate: () => Promise<void> };
-type TesseractApi = { createWorker: (languages: string, oem?: number, options?: Record<string, unknown>) => Promise<TesseractWorker> };
-declare global { interface Window { Tesseract?: TesseractApi } }
-
-let tesseractLoader: Promise<TesseractApi> | null = null;
-function loadTesseract(): Promise<TesseractApi> {
-  if (window.Tesseract) return Promise.resolve(window.Tesseract);
-  if (!tesseractLoader) {
-    tesseractLoader = new Promise((resolve, reject) => {
-      const existing = document.querySelector<HTMLScriptElement>('script[data-heom-tesseract]');
-      const script = existing || document.createElement('script');
-      const fail = () => { tesseractLoader = null; reject(new Error('Não foi possível carregar o mecanismo de leitura. Verifique a conexão com a internet e tente novamente.')); };
-      script.addEventListener('error', fail, { once: true });
-      script.addEventListener('load', () => {
-        if (window.Tesseract) resolve(window.Tesseract);
-        else fail();
-      }, { once: true });
-      if (!existing) {
-        script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js';
-        script.async = true;
-        script.dataset.heomTesseract = 'true';
-        document.head.appendChild(script);
-      } else if (window.Tesseract) resolve(window.Tesseract);
-    });
-  }
-  return tesseractLoader;
-}
-
-function extractPlateFields(rawText: string): PlateFields {
-  const text = rawText.replace(/\r/g, '\n').replace(/[|]/g, 'I');
-  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
-  const capture = (labels: string) => {
-    const expression = new RegExp(`(?:${labels})(?:\\s+(?:N[º°]?|NO\\.?|NUMBER))?\\s*[:#=\\-]?\\s*([A-Z0-9][A-Z0-9./_-]{2,})`, 'i');
-    for (const line of lines) {
-      const match = line.match(expression);
-      if (match?.[1]) return match[1].replace(/[.,;:]$/, '').trim();
-    }
-    return '';
-  };
-  const knownManufacturers = [
-    'Mindray', 'Philips', 'GE Healthcare', 'General Electric', 'Dräger', 'Draeger',
-    'Siemens', 'B. Braun', 'Fresenius', 'Nihon Kohden', 'Medtronic', 'Zoll',
-    'Instramed', 'CMOS Drake', 'Schiller', 'Edan', 'Welch Allyn', 'Baxter',
-    'Hamilton Medical', 'Maquet', 'Getinge', 'Olympus', 'Stryker', 'Canon Medical',
-    'Abbott', 'Roche', 'BioSystems', 'Fanem'
-  ];
-  const upper = text.toLocaleUpperCase('pt-BR');
-  const manufacturer = knownManufacturers.find((brand) => upper.includes(brand.toLocaleUpperCase('pt-BR'))) || '';
-  return {
-    officialPropertyNumber: capture('PATRIM[ÔO]NIO|TOMBAMENTO|ETIQUETA\\s+PATRIMONIAL|PLAQUETA\\s+PATRIMONIAL'),
-    manufacturer,
-    model: capture('MODELO|MODEL|REFER[ÊE]NCIA|REFERENCE|REF\\.?|TIPO|TYPE'),
-    serialNumber: capture('N[ÚU]MERO\\s+DE\\s+S[ÉE]RIE|N[º°]?\\s*S[ÉE]RIE|SERIAL(?:\\s*(?:NO|NUMBER))?|S\\s*/\\s*N|S\\.N\\.?|SN')
-  };
-}
+type PlateFields = Pick<PlateOcrFields, 'officialPropertyNumber' | 'manufacturer' | 'model' | 'serialNumber' | 'reference'>;
 
 function AssetForm({ asset, departments, rooms, busy, onSubmit, onCancel }: { asset: Asset | null; departments: Department[]; rooms: Room[]; busy: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void }) {
   const [departmentId, setDepartmentId] = useState(asset?.departmentId || '');
+  const [roomId, setRoomId] = useState(asset?.roomId || '');
   const [platePhoto, setPlatePhoto] = useState<File | null>(null);
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrMessage, setOcrMessage] = useState('');
   const [rawOcrText, setRawOcrText] = useState('');
+  const [ocrConfidence, setOcrConfidence] = useState<number | null>(null);
   const [recognized, setRecognized] = useState<PlateFields>({
     officialPropertyNumber: asset?.officialPropertyNumber || '',
-    manufacturer: asset?.manufacturer || '',
-    model: asset?.model || '',
-    serialNumber: asset?.serialNumber || ''
+    manufacturer: asset?.manufacturer || '', model: asset?.model || '',
+    serialNumber: asset?.serialNumber || '', reference: asset?.reference || ''
   });
   const previewUrl = useMemo(() => platePhoto ? URL.createObjectURL(platePhoto) : '', [platePhoto]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
@@ -541,63 +514,47 @@ function AssetForm({ asset, departments, rooms, busy, onSubmit, onCancel }: { as
 
   async function readPlate() {
     if (!platePhoto) { setOcrMessage('Selecione ou fotografe a plaqueta antes de iniciar a leitura.'); return; }
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(platePhoto.type)) { setOcrMessage('Formato não suportado. Utilize JPG, PNG ou WEBP.'); return; }
-    if (platePhoto.size > 12 * 1024 * 1024) { setOcrMessage('A imagem deve ter até 12 MB.'); return; }
-    setOcrBusy(true); setOcrMessage('Preparando o reconhecimento de texto…'); setRawOcrText('');
-    let worker: TesseractWorker | null = null;
+    setOcrBusy(true); setOcrMessage('Validando imagem…'); setRawOcrText(''); setOcrConfidence(null);
     try {
-      const Tesseract = await loadTesseract();
-      worker = await Tesseract.createWorker('por+eng', 1, {
-        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/worker.min.js',
-        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.0',
-        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-        logger: (message: { status?: string; progress?: number }) => {
-          if (message.status === 'recognizing text' && typeof message.progress === 'number') {
-            setOcrMessage(`Lendo a plaqueta… ${Math.round(message.progress * 100)}%`);
-          } else if (message.status) setOcrMessage('Preparando o mecanismo de leitura…');
-        }
+      const result = await recognizePlateImage(platePhoto, (_step, progress, message) => {
+        const percent = progress === null ? '' : ` ${Math.round(progress * 100)}%`;
+        setOcrMessage(`${message}${percent}`);
       });
-      const result = await worker.recognize(platePhoto);
-      const text = result.data.text || '';
-      setRawOcrText(text);
-      const fields = extractPlateFields(text);
+      setRawOcrText(result.rawText);
+      setOcrConfidence(result.confidence);
       setRecognized((current) => ({
-        officialPropertyNumber: fields.officialPropertyNumber || current.officialPropertyNumber,
-        manufacturer: fields.manufacturer || current.manufacturer,
-        model: fields.model || current.model,
-        serialNumber: fields.serialNumber || current.serialNumber
+        officialPropertyNumber: result.fields.officialPropertyNumber || current.officialPropertyNumber,
+        manufacturer: result.fields.manufacturer || current.manufacturer,
+        model: result.fields.model || current.model,
+        serialNumber: result.fields.serialNumber || current.serialNumber,
+        reference: result.fields.reference || current.reference
       }));
-      const count = Object.values(fields).filter(Boolean).length;
-      setOcrMessage(count
-        ? `${count} campo(s) identificado(s). Confira os valores preenchidos antes de salvar.`
-        : 'O texto foi lido, mas não foi possível identificar automaticamente os campos. Confira a imagem e preencha os dados manualmente.');
+      setOcrMessage(result.message);
     } catch (error) {
-      setOcrMessage(error instanceof Error ? error.message : 'Falha ao ler a plaqueta. Tente uma foto mais nítida.');
-    } finally {
-      if (worker) await worker.terminate().catch(() => undefined);
-      setOcrBusy(false);
-    }
+      setOcrMessage(error instanceof Error ? `Falha no OCR: ${error.message}` : 'Falha desconhecida no reconhecimento. O texto já identificado foi preservado.');
+    } finally { setOcrBusy(false); }
   }
 
   return <form className="form-grid" onSubmit={onSubmit}>
-    {!asset && <section className="asset-photo-registration field-span-2">
-      <div className="asset-photo-registration-heading"><div><span className="eyebrow">CADASTRO ASSISTIDO POR IMAGEM</span><strong>1. Fotografe a plaqueta de identificação</strong><p>O HEOM fará a leitura local do texto e tentará preencher os campos reconhecíveis.</p></div><Camera size={22}/></div>
+    <section className="asset-photo-registration field-span-2">
+      <div className="asset-photo-registration-heading"><div><span className="eyebrow">CADASTRO ASSISTIDO POR IMAGEM</span><strong>Fotografe a plaqueta de identificação</strong><p>O OCR comum aos módulos do HEOM processa a imagem neste navegador, sem enviar a fotografia a serviços externos.</p></div><Camera size={22}/></div>
       <div className="asset-photo-registration-body">
         <label className="asset-photo-picker"><input type="file" name="assetPhoto" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => { setPlatePhoto(event.target.files?.[0] || null); setOcrMessage(''); setRawOcrText(''); }} /><span>{previewUrl ? <img src={previewUrl} alt="Pré-visualização da plaqueta selecionada"/> : <Camera size={24}/>}</span><strong>{platePhoto?.name || 'Selecionar ou fotografar a plaqueta'}</strong><small>JPG, PNG ou WEBP · até 12 MB</small></label>
-        <div className="asset-photo-ocr-actions"><button type="button" className="button button-primary" onClick={() => void readPlate()} disabled={!platePhoto || ocrBusy || busy}>{ocrBusy ? <><LoaderCircle size={15} className="spin"/> Lendo plaqueta…</> : <><ScanLine size={15}/> Ler e preencher dados</>}</button><p className="form-hint">A imagem é processada no navegador. O arquivo original será anexado ao equipamento após a confirmação do cadastro.</p>{ocrMessage && <div className="ocr-inline-status" role="status">{ocrMessage}</div>}</div>
+        <div className="asset-photo-ocr-actions"><button type="button" className="button button-primary" onClick={() => void readPlate()} disabled={!platePhoto || ocrBusy || busy}>{ocrBusy ? <><LoaderCircle size={15} className="spin"/> Lendo plaqueta…</> : <><ScanLine size={15}/> Ler e preencher dados</>}</button><p className="form-hint">A imagem é processada localmente. O arquivo original será anexado ao equipamento após a confirmação do cadastro; se o anexo falhar, o cadastro ficará aberto para nova tentativa.</p>{ocrMessage && <div className="ocr-inline-status" role="status">{ocrMessage}</div>}{ocrConfidence !== null && <small>Confiança média informada pelo OCR: {Math.round(ocrConfidence)}% (indicador do mecanismo, não garantia de acerto).</small>}</div>
       </div>
       {rawOcrText && <details className="asset-ocr-raw"><summary>Conferir texto reconhecido</summary><pre>{rawOcrText}</pre></details>}
       <div className="form-hint"><CircleHelp size={15}/> O reconhecimento não inventa patrimônio, nome, categoria ou localização. Esses campos continuam exigindo conferência e preenchimento pelo operador.</div>
-    </section>}
+    </section>
     <label>Número de identificação *<input name="assetNumber" required defaultValue={asset?.assetNumber || ''} placeholder="Ex.: PAT-000123 ou HEOM-000123" /></label>
     <label>Número patrimonial oficial<input name="officialPropertyNumber" value={recognized.officialPropertyNumber} onChange={(event) => setRecognized((current) => ({ ...current, officialPropertyNumber: event.target.value }))} placeholder="Preenchido pela leitura, quando identificado" /></label>
     <label className="field-span-2">Nome do equipamento *<input name="name" required defaultValue={asset?.name || ''} placeholder="Ex.: Monitor multiparamétrico" /></label>
     <label>Categoria *<input name="category" required defaultValue={asset?.category || ''} placeholder="Ex.: Monitorização" /></label>
     <label>Fabricante<input name="manufacturer" value={recognized.manufacturer} onChange={(event) => setRecognized((current) => ({ ...current, manufacturer: event.target.value }))} /></label>
     <label>Modelo<input name="model" value={recognized.model} onChange={(event) => setRecognized((current) => ({ ...current, model: event.target.value }))} /></label>
+    <label>Referência do equipamento<input name="reference" value={recognized.reference} onChange={(event) => setRecognized((current) => ({ ...current, reference: event.target.value }))} /></label>
     <label>Número de série<input name="serialNumber" value={recognized.serialNumber} onChange={(event) => setRecognized((current) => ({ ...current, serialNumber: event.target.value }))} /></label>
-    <label>Setor de referência<select name="departmentId" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}><option value="">Não atribuído</option>{departments.map((dep) => <option key={dep.id} value={dep.id}>{dep.name}</option>)}</select></label>
-    <label>Ambiente / sala<select name="roomId" defaultValue={asset?.roomId || ''}><option value="">Não informado</option>{filteredRooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}</select></label>
+    <label>Setor de referência *<select name="departmentId" required value={departmentId} onChange={(e) => { setDepartmentId(e.target.value); if (!rooms.some((room) => room.id === roomId && room.departmentId === e.target.value)) setRoomId(''); }}><option value="">Selecione o setor</option>{departments.map((dep) => <option key={dep.id} value={dep.id}>{dep.name}</option>)}</select></label>
+    <label>Ambiente / sala<select name="roomId" value={roomId} onChange={(event) => setRoomId(event.target.value)}><option value="">Não informado</option>{filteredRooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}</select></label>
     <label>Situação operacional<select name="operationalStatus" defaultValue={asset?.operationalStatus || 'EM_OPERACAO'}><option value="EM_OPERACAO">Em operação</option><option value="INDISPONIVEL">Indisponível</option><option value="EM_MANUTENCAO">Em manutenção</option><option value="BAIXADO">Baixado</option></select></label>
     <label>Criticidade<select name="criticality" defaultValue={asset?.criticality || 'MEDIA'}><option value="BAIXA">Baixa</option><option value="MEDIA">Média</option><option value="ALTA">Alta</option><option value="CRITICA">Crítica</option></select></label>
     <label className="field-span-2">Identificador da etiqueta de rastreamento<input name="trackingTagId" defaultValue={asset?.trackingTagId || ''} placeholder="Informe somente se houver etiqueta cadastrada" /></label>

@@ -1,4 +1,6 @@
 import QRCode from 'qrcode';
+import { validateAssetDraft } from './asset-validation';
+import { validateImageSignature } from './image-validation';
 
 type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
 type DemoUser = { id: string; name: string; role: Role };
@@ -141,9 +143,10 @@ function openPhotoDb(): Promise<IDBDatabase> {
     try { request = indexedDB.open(PHOTO_DB, 1); }
     catch (error) { reject(new LocalApiError(`Não foi possível iniciar o armazenamento de fotografias: ${error instanceof Error ? error.message : 'acesso ao IndexedDB bloqueado'}`, 503)); return; }
     request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains(PHOTO_STORE)) db.createObjectStore(PHOTO_STORE); };
-    request.onsuccess = () => { const db = request.result; db.onversionchange = () => db.close(); resolve(db); };
+    let wasBlocked = false;
+    request.onsuccess = () => { const db = request.result; if (wasBlocked) { db.close(); return; } db.onversionchange = () => db.close(); resolve(db); };
     request.onerror = () => reject(new LocalApiError(`Falha ao abrir o banco local de fotografias: ${request.error?.message || 'erro de armazenamento do navegador'}`, 503));
-    request.onblocked = () => reject(new LocalApiError('O armazenamento de fotografias está ocupado por outra aba do HEOM. Feche as outras abas do sistema e tente novamente.', 503));
+    request.onblocked = () => { wasBlocked = true; reject(new LocalApiError('O armazenamento de fotografias está ocupado por outra aba do HEOM. Feche as outras abas do sistema e tente novamente.', 503)); };
   });
 }
 
@@ -168,8 +171,15 @@ async function photoPut(photoId: string, blob: Blob): Promise<void> { await phot
 async function photoGet(photoId: string): Promise<Blob | null> { return (await photoTransaction('readonly', (store) => store.get(photoId))) || null; }
 async function photoDelete(photoId: string): Promise<void> { await photoTransaction('readwrite', (store) => store.delete(photoId)); }
 
+async function validateImageContent(blob: Blob): Promise<void> {
+  const bytes = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  const validationMessage = validateImageSignature(bytes, blob.type);
+  if (validationMessage) throw new LocalApiError(validationMessage, 415);
+}
+
 async function hashImage(blob: Blob): Promise<string> {
-  if (!blob.type.startsWith('image/')) throw new LocalApiError('O arquivo selecionado não é uma imagem reconhecida.', 415);
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(blob.type)) throw new LocalApiError('O arquivo selecionado não é uma imagem reconhecida.', 415);
+  await validateImageContent(blob);
   let drawable: CanvasImageSource;
   let close: (() => void) | undefined;
   if (typeof createImageBitmap === 'function') {
@@ -177,6 +187,10 @@ async function hashImage(blob: Blob): Promise<string> {
     catch { drawable = await loadImageElement(blob); }
   } else drawable = await loadImageElement(blob);
   try {
+    const imageDimensions = drawable as { width: number; height: number; naturalWidth?: number; naturalHeight?: number };
+    const width = imageDimensions.naturalWidth || imageDimensions.width;
+    const height = imageDimensions.naturalHeight || imageDimensions.height;
+    if (!width || !height || width > 20_000 || height > 20_000 || width * height > 40_000_000) throw new LocalApiError('A imagem possui dimensões inválidas ou excede 40 megapixels.', 413);
     const canvas = document.createElement('canvas'); canvas.width = 9; canvas.height = 8;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new LocalApiError('O navegador não disponibilizou o recurso de análise de imagem. Atualize o Chrome/Edge e tente novamente.', 503);
@@ -238,29 +252,30 @@ export async function localDemoApi<T = any>(pathInput: string, init: RequestInit
   }
   if (path === '/assets' && method === 'GET') {
     const q = (query.get('q') || '').toLocaleLowerCase('pt-BR'); const status = query.get('status') || ''; const dept = query.get('departmentId') || ''; const criticality = query.get('criticality') || '';
-    const data = s.assets.filter((a) => !a.archivedAt && (!status || a.operationalStatus === status) && (!dept || a.departmentId === dept) && (!criticality || a.criticality === criticality) && (!q || [a.name, a.assetNumber, a.officialPropertyNumber, a.serialNumber, a.manufacturer, a.model, a.category, a.trackingTagId].some((v) => String(v || '').toLowerCase().includes(q)))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(assetView);
+    const data = s.assets.filter((a) => !a.archivedAt && (!status || a.operationalStatus === status) && (!dept || a.departmentId === dept) && (!criticality || a.criticality === criticality) && (!q || [a.name, a.assetNumber, a.officialPropertyNumber, a.serialNumber, a.manufacturer, a.model, a.reference, a.category, a.trackingTagId].some((v) => String(v || '').toLowerCase().includes(q)))).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(assetView);
     return { data } as T;
   }
   let m = matchPath(path, /^\/assets\/([^/]+)$/);
   if (m && method === 'GET') { const a = s.assets.find((v) => v.id === m![1] && !v.archivedAt); if (!a) throw new LocalApiError('Equipamento não encontrado.', 404); return { data: assetView(a) } as T; }
   if (path === '/assets' && method === 'POST') {
     requireRole(['ADMIN', 'GESTOR', 'OPERADOR']);
-    if (!body.assetNumber || !body.name || !body.category) throw new LocalApiError('Preencha patrimônio, nome e categoria.');
-    const normalize = (value: unknown) => String(value || '').trim().toLocaleUpperCase('pt-BR');
-    if (s.assets.some((a) => !a.archivedAt && (normalize(a.assetNumber) === normalize(body.assetNumber) || Boolean(body.officialPropertyNumber && normalize(a.officialPropertyNumber) === normalize(body.officialPropertyNumber)) || Boolean(body.serialNumber && normalize(a.serialNumber) === normalize(body.serialNumber)) || Boolean(body.trackingTagId && normalize(a.trackingTagId) === normalize(body.trackingTagId))))) throw new LocalApiError('Possível duplicidade: patrimônio, número de série, identificação interna ou etiqueta já cadastrados.', 409);
-    if (body.roomId && (!body.departmentId || !s.rooms.some((r) => r.id === body.roomId && r.departmentId === body.departmentId))) throw new LocalApiError('O ambiente selecionado não pertence ao setor informado.');
-    if (body.departmentId && !s.departments.some((d) => d.id === body.departmentId && d.active)) throw new LocalApiError('O setor selecionado não foi encontrado.');
-    const asset = { id: id(), qrCode: '', assetNumber: String(body.assetNumber).trim(), officialPropertyNumber: body.officialPropertyNumber || null, name: String(body.name).trim(), category: String(body.category).trim(), description: body.description || null, manufacturer: body.manufacturer || null, model: body.model || null, serialNumber: body.serialNumber || null, departmentId: body.departmentId || null, roomId: body.roomId || null, operationalStatus: body.operationalStatus || 'EM_OPERACAO', criticality: body.criticality || 'MEDIA', trackingStatus: body.trackingTagId ? 'ULTIMA_LOCALIZACAO' : 'RASTREAMENTO_DESATIVADO', trackingTagId: body.trackingTagId || null, lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now() };
-    asset.qrCode = `HEOM-ASSET:${asset.id}`; s.assets.unshift(asset); record('EQUIPAMENTO_CADASTRADO', 'ASSET', asset.id); save(); return { data: assetView(asset) } as T;
+    const validationError = validateAssetDraft(body, s.departments, s.rooms, s.assets);
+    if (validationError) throw new LocalApiError(validationError, validationError.startsWith('Possível duplicidade') ? 409 : 400);
+    const asset = { id: id(), qrCode: '', assetNumber: String(body.assetNumber).trim(), officialPropertyNumber: body.officialPropertyNumber || null, name: String(body.name).trim(), category: String(body.category).trim(), description: body.description || null, manufacturer: body.manufacturer || null, model: body.model || null, serialNumber: body.serialNumber || null, reference: body.reference || null, departmentId: body.departmentId || null, roomId: body.roomId || null, operationalStatus: body.operationalStatus || 'EM_OPERACAO', criticality: body.criticality || 'MEDIA', trackingStatus: body.trackingTagId ? 'ULTIMA_LOCALIZACAO' : 'RASTREAMENTO_DESATIVADO', trackingTagId: body.trackingTagId || null, lastDetectedAt: null, dataOrigin: 'SIMULADO', archivedAt: null, createdAt: now(), updatedAt: now() };
+    asset.qrCode = `HEOM-ASSET:${asset.id}`; s.assets.unshift(asset);
+    try { record('EQUIPAMENTO_CADASTRADO', 'ASSET', asset.id); save(); }
+    catch (error) { s.assets = s.assets.filter((item) => item.id !== asset.id); s.auditLogs = s.auditLogs.filter((item) => item.entityId !== asset.id); throw new LocalApiError(`O equipamento foi validado, mas não pôde ser persistido no armazenamento local: ${error instanceof Error ? error.message : 'armazenamento indisponível'}`, 507); }
+    return { data: assetView(asset) } as T;
   }
   m = matchPath(path, /^\/assets\/([^/]+)$/);
   if (m && method === 'PUT') {
     requireRole(['ADMIN', 'GESTOR', 'OPERADOR']); const a = s.assets.find((v) => v.id === m![1] && !v.archivedAt); if (!a) throw new LocalApiError('Equipamento não encontrado.', 404);
-    const normalize = (value: unknown) => String(value || '').trim().toLocaleUpperCase('pt-BR');
-    if (s.assets.some((other) => other.id !== a.id && !other.archivedAt && (normalize(other.assetNumber) === normalize(body.assetNumber) || Boolean(body.officialPropertyNumber && normalize(other.officialPropertyNumber) === normalize(body.officialPropertyNumber)) || Boolean(body.serialNumber && normalize(other.serialNumber) === normalize(body.serialNumber)) || Boolean(body.trackingTagId && normalize(other.trackingTagId) === normalize(body.trackingTagId))))) throw new LocalApiError('Possível duplicidade: patrimônio, número de série, identificação interna ou etiqueta já cadastrados.', 409);
-    if (body.roomId && (!body.departmentId || !s.rooms.some((r) => r.id === body.roomId && r.departmentId === body.departmentId))) throw new LocalApiError('O ambiente selecionado não pertence ao setor informado.');
-    if (body.departmentId && !s.departments.some((d) => d.id === body.departmentId && d.active)) throw new LocalApiError('O setor selecionado não foi encontrado.');
-    Object.assign(a, body, { updatedAt: now(), dataOrigin: 'SIMULADO', qrCode: `HEOM-ASSET:${a.id}` }); record('EQUIPAMENTO_ATUALIZADO', 'ASSET', a.id); save(); return { data: assetView(a) } as T;
+    const validationError = validateAssetDraft(body, s.departments, s.rooms, s.assets, a.id);
+    if (validationError) throw new LocalApiError(validationError, validationError.startsWith('Possível duplicidade') ? 409 : 400);
+    const previous = { ...a }; Object.assign(a, body, { updatedAt: now(), dataOrigin: 'SIMULADO', qrCode: `HEOM-ASSET:${a.id}` });
+    try { record('EQUIPAMENTO_ATUALIZADO', 'ASSET', a.id); save(); }
+    catch (error) { Object.assign(a, previous); s.auditLogs = s.auditLogs.filter((item) => !(item.action === 'EQUIPAMENTO_ATUALIZADO' && item.entityId === a.id)); throw new LocalApiError(`As alterações foram validadas, mas não puderam ser persistidas: ${error instanceof Error ? error.message : 'armazenamento indisponível'}`, 507); }
+    return { data: assetView(a) } as T;
   }
   m = matchPath(path, /^\/assets\/([^/]+)\/archive$/);
   if (m && method === 'POST') { requireRole(['ADMIN', 'GESTOR']); const a = s.assets.find((v) => v.id === m![1] && !v.archivedAt); if (!a) throw new LocalApiError('Equipamento não encontrado.', 404); a.archivedAt = now(); a.updatedAt = now(); record('EQUIPAMENTO_ARQUIVADO', 'ASSET', a.id); save(); return { message: 'Equipamento arquivado.' } as T; }
@@ -273,14 +288,43 @@ export async function localDemoApi<T = any>(pathInput: string, init: RequestInit
     if (file.size > 12 * 1024 * 1024) throw new LocalApiError('A fotografia deve ter até 12 MB na demonstração. Reduza o tamanho ou a resolução e tente novamente.', 413);
     const asset = s.assets.find((a) => a.id === m![1] && !a.archivedAt); if (!asset) throw new LocalApiError('Equipamento não encontrado.', 404);
     const photoId = id(); const dhash = await hashImage(file); const originalName = (file as File).name || 'fotografia';
-    await photoPut(photoId, file); const imageRole = String(form?.get('imageRole') || 'EQUIPAMENTO');
+    const imageRole = String(form?.get('imageRole') || 'EQUIPAMENTO');
     const photo = { id: photoId, assetId: asset.id, originalName, mimeType: file.type, sizeBytes: file.size, imageRole, dhash, uploadedBy: user.id, createdAt: now(), archivedAt: null };
-    s.photoMeta.unshift(photo); record('FOTOGRAFIA_ADICIONADA', 'ASSET_PHOTO', photoId, { assetId: asset.id }); save(); return { data: { ...photo, fileUrl: `/api/assets/${asset.id}/photos/${photoId}/file` } } as T;
+    await photoPut(photoId, file);
+    try {
+      s.photoMeta.unshift(photo);
+      record('FOTOGRAFIA_ADICIONADA', 'ASSET_PHOTO', photoId, { assetId: asset.id });
+      save();
+    } catch (error) {
+      s.photoMeta = s.photoMeta.filter((item) => item.id !== photoId);
+      s.auditLogs = s.auditLogs.filter((item) => !(item.entityType === 'ASSET_PHOTO' && item.entityId === photoId));
+      await photoDelete(photoId).catch(() => undefined);
+      throw new LocalApiError(`A fotografia foi lida, mas não foi possível concluir a gravação dos metadados: ${error instanceof Error ? error.message : 'falha no localStorage'}`, 507);
+    }
+    return { data: { ...photo, fileUrl: `/api/assets/${asset.id}/photos/${photoId}/file` } } as T;
   }
   m = matchPath(path, /^\/assets\/([^/]+)\/photos\/([^/]+)$/);
-  if (m && method === 'DELETE') { requireRole(['ADMIN', 'GESTOR']); const photo = s.photoMeta.find((p) => p.id === m![2] && p.assetId === m![1]); if (!photo) throw new LocalApiError('Fotografia não encontrada.', 404); photo.archivedAt = now(); await photoDelete(photo.id); record('FOTOGRAFIA_REMOVIDA', 'ASSET_PHOTO', photo.id); save(); return { message: 'Fotografia removida.' } as T; }
+  if (m && method === 'DELETE') {
+    requireRole(['ADMIN', 'GESTOR']);
+    const photo = s.photoMeta.find((p) => p.id === m![2] && p.assetId === m![1]);
+    if (!photo) throw new LocalApiError('Fotografia não encontrada.', 404);
+    const previousArchivedAt = photo.archivedAt;
+    photo.archivedAt = now();
+    record('FOTOGRAFIA_REMOVIDA', 'ASSET_PHOTO', photo.id);
+    try { save(); }
+    catch (error) {
+      photo.archivedAt = previousArchivedAt;
+      s.auditLogs = s.auditLogs.filter((item) => !(item.action === 'FOTOGRAFIA_REMOVIDA' && item.entityId === photo.id));
+      throw new LocalApiError(`Não foi possível arquivar a fotografia no inventário local: ${error instanceof Error ? error.message : 'armazenamento indisponível'}`, 507);
+    }
+    try { await photoDelete(photo.id); }
+    catch (error) {
+      throw new LocalApiError(`A fotografia foi removida da galeria, mas o arquivo local não pôde ser apagado do IndexedDB: ${error instanceof Error ? error.message : 'falha de armazenamento'}. O vínculo está arquivado e não será exibido.`, 507);
+    }
+    return { message: 'Fotografia removida deste navegador.' } as T;
+  }
   m = matchPath(path, /^\/assets\/([^/]+)\/photos\/([^/]+)\/ocr$/);
-  if (m && method === 'POST') { requireRole(['ADMIN', 'GESTOR', 'OPERADOR']); const photo = s.photoMeta.find((p) => p.id === m![2] && p.assetId === m![1]); if (!photo) throw new LocalApiError('Fotografia não encontrada.', 404); const result = { id: id(), assetId: m![1], photoId: photo.id, status: 'MOTOR_INDISPONIVEL', rawText: '', fields: { manufacturer: null, model: null, serialNumber: null, reference: null }, confidence: null, reviewStatus: 'PENDENTE', message: 'OCR automático indisponível neste modo de demonstração no navegador. Preencha os campos manualmente após conferir a plaqueta fotografada.' }; return { data: result, message: result.message } as T; }
+  if (m && method === 'POST') { requireRole(['ADMIN', 'GESTOR', 'OPERADOR']); throw new LocalApiError('Este endpoint legado não executa OCR no servidor. O reconhecimento de plaquetas agora é executado diretamente no navegador pelo módulo compartilhado plate-ocr.ts.', 410); }
   m = matchPath(path, /^\/assets\/([^/]+)\/ocr\/([^/]+)\/confirm$/);
   if (m && method === 'POST') {
     requireRole(['ADMIN', 'GESTOR', 'OPERADOR']);
@@ -325,10 +369,31 @@ export async function localDemoApi<T = any>(pathInput: string, init: RequestInit
   if (path === '/imports/inventory-template.csv' && method === 'GET') return { rows: [] } as T;
   if (path === '/imports/inventory-csv' && method === 'POST') {
     requireRole(['ADMIN', 'GESTOR', 'OPERADOR']); const form = init.body instanceof FormData ? init.body : null; const file = form?.get('file'); if (!(file instanceof Blob)) throw new LocalApiError('Selecione um arquivo CSV.'); const text = await file.text(); const rows = csvRows(text); if (rows.length < 2) throw new LocalApiError('O CSV não contém linhas para importar.');
-    const headers = rows[0].map((h) => h.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()); const col = (names: string[]) => headers.findIndex((h) => names.includes(h)); const idx = { asset: col(['patrimonio', 'identificacao', 'numero de identificacao']), name: col(['nome', 'equipamento']), category: col(['categoria']), manufacturer: col(['fabricante', 'marca']), model: col(['modelo']), serial: col(['numero de serie', 'serie']), property: col(['patrimonio oficial']), status: col(['situacao', 'situacao operacional']), criticality: col(['criticidade']) };
+    const normalizeHeader = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').replace(/[^a-z0-9]/g, '');
+    const headers = rows[0].map(normalizeHeader); const col = (names: string[]) => headers.findIndex((h) => names.some((name) => h === normalizeHeader(name)));
+    const idx = { asset: col(['patrimonio', 'identificacao', 'numero de identificacao']), name: col(['nome', 'equipamento']), category: col(['categoria']), manufacturer: col(['fabricante', 'marca']), model: col(['modelo']), serial: col(['numero de serie', 'serie']), reference: col(['referencia', 'reference', 'ref']), property: col(['patrimonio oficial']), department: col(['setor', 'departamento']), room: col(['sala', 'ambiente', 'room']), status: col(['situacao', 'situacao operacional']), criticality: col(['criticidade']) };
     const errors: any[] = []; const imported: any[] = [];
-    rows.slice(1).forEach((r, index) => { const assetNumber = r[idx.asset] || ''; const name = r[idx.name] || ''; const category = r[idx.category] || ''; const issues: string[] = []; if (!assetNumber) issues.push('Patrimônio obrigatório.'); if (!name) issues.push('Nome obrigatório.'); if (!category) issues.push('Categoria obrigatória.'); if (s.assets.some((a) => a.assetNumber.toLowerCase() === assetNumber.toLowerCase())) issues.push('Identificador já cadastrado.'); if (issues.length) errors.push({ row: index + 2, errors: issues }); else imported.push({ id: id(), assetNumber, officialPropertyNumber: r[idx.property] || null, name, category, manufacturer: r[idx.manufacturer] || null, model: r[idx.model] || null, serialNumber: r[idx.serial] || null, departmentId: null, roomId: null, operationalStatus: r[idx.status] || 'EM_OPERACAO', criticality: r[idx.criticality] || 'MEDIA', trackingStatus: 'RASTREAMENTO_DESATIVADO', trackingTagId: null, dataOrigin: 'SIMULADO', archivedAt: null, description: 'Importado para demonstração.', createdAt: now(), updatedAt: now() }); });
-    if (errors.length) throw new LocalApiError('A importação não foi aplicada. Corrija as linhas informadas.', 422, { data: { errors, totalRows: rows.length - 1, imported: 0 } }); s.assets.unshift(...imported); record('INVENTARIO_IMPORTADO_CSV', 'IMPORT', null, { imported: imported.length }); save(); return { message: `${imported.length} equipamento(s) importado(s) como SIMULADO.`, data: { totalRows: rows.length - 1, imported: imported.length, errors: [] } } as T;
+    rows.slice(1).forEach((r, index) => {
+      const value = (position: number) => position >= 0 ? String(r[position] || '').trim() : '';
+      const assetNumber = value(idx.asset); const name = value(idx.name); const category = value(idx.category);
+      const officialPropertyNumber = value(idx.property); const serialNumber = value(idx.serial); const departmentName = value(idx.department); const roomName = value(idx.room);
+      const issues: string[] = [];
+      if (!assetNumber) issues.push('Identificação obrigatória.'); if (!name) issues.push('Nome obrigatório.'); if (!category) issues.push('Categoria obrigatória.');
+      const department = s.departments.find((d) => d.active && (d.code.toLocaleLowerCase('pt-BR') === departmentName.toLocaleLowerCase('pt-BR') || d.name.toLocaleLowerCase('pt-BR') === departmentName.toLocaleLowerCase('pt-BR')));
+      if (!department) issues.push(departmentName ? `Setor não encontrado: ${departmentName}.` : 'Setor obrigatório.');
+      const room = roomName ? s.rooms.find((r) => r.code.toLocaleLowerCase('pt-BR') === roomName.toLocaleLowerCase('pt-BR') || r.name.toLocaleLowerCase('pt-BR') === roomName.toLocaleLowerCase('pt-BR')) : undefined;
+      if (roomName && !room) issues.push(`Ambiente não encontrado: ${roomName}.`);
+      if (room && department && room.departmentId !== department.id) issues.push('O ambiente informado não pertence ao setor selecionado.');
+      if (s.assets.some((a) => !a.archivedAt && (a.assetNumber.toLocaleUpperCase('pt-BR') === assetNumber.toLocaleUpperCase('pt-BR') || Boolean(officialPropertyNumber && a.officialPropertyNumber?.toLocaleUpperCase('pt-BR') === officialPropertyNumber.toLocaleUpperCase('pt-BR')) || Boolean(serialNumber && a.serialNumber?.toLocaleUpperCase('pt-BR') === serialNumber.toLocaleUpperCase('pt-BR'))))) issues.push('Patrimônio, número patrimonial oficial ou número de série já cadastrado.');
+      if (issues.length) errors.push({ row: index + 2, errors: issues });
+      else imported.push({ id: id(), qrCode: '', assetNumber, officialPropertyNumber: officialPropertyNumber || null, name, category, manufacturer: value(idx.manufacturer) || null, model: value(idx.model) || null, serialNumber: serialNumber || null, reference: value(idx.reference) || null, departmentId: department!.id, roomId: room?.id || null, operationalStatus: value(idx.status) || 'EM_OPERACAO', criticality: value(idx.criticality) || 'MEDIA', trackingStatus: 'RASTREAMENTO_DESATIVADO', trackingTagId: null, dataOrigin: 'SIMULADO', archivedAt: null, description: 'Importado para demonstração.', createdAt: now(), updatedAt: now() });
+    });
+    if (errors.length) throw new LocalApiError('A importação não foi aplicada. Corrija as linhas informadas.', 422, { data: { errors, totalRows: rows.length - 1, imported: 0 } });
+    for (const asset of imported) asset.qrCode = `HEOM-ASSET:${asset.id}`;
+    s.assets.unshift(...imported);
+    try { record('INVENTARIO_IMPORTADO_CSV', 'IMPORT', null, { imported: imported.length }); save(); }
+    catch (error) { s.assets = s.assets.filter((asset) => !imported.some((item) => item.id === asset.id)); s.auditLogs = s.auditLogs.filter((entry) => !(entry.action === 'INVENTARIO_IMPORTADO_CSV' && entry.entityType === 'IMPORT')); throw new LocalApiError(`A importação foi validada, mas não pôde ser persistida neste navegador: ${error instanceof Error ? error.message : 'armazenamento indisponível'}`, 507); }
+    return { message: `${imported.length} equipamento(s) importado(s) como SIMULADO.`, data: { totalRows: rows.length - 1, imported: imported.length, errors: [] } } as T;
   }
   if (path === '/movements' && method === 'GET') return { data: s.movements.map(movementView).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)) } as T;
   if (path === '/movements' && method === 'POST') { requireRole(['ADMIN', 'GESTOR', 'OPERADOR']); const asset = s.assets.find((a) => a.id === body.assetId && !a.archivedAt); const dept = s.departments.find((d) => d.id === body.destinationDepartmentId && d.active); if (!asset || !dept || String(body.reason || '').trim().length < 5) throw new LocalApiError('Preencha equipamento, destino e justificativa.'); if (body.destinationRoomId && !s.rooms.some((r) => r.id === body.destinationRoomId && r.departmentId === dept.id)) throw new LocalApiError('O ambiente de destino não pertence ao setor selecionado.'); if (!['TEMPORARIA', 'PERMANENTE', 'MANUTENCAO', 'EMERGENCIAL'].includes(body.movementType || 'TEMPORARIA')) throw new LocalApiError('Tipo de movimentação inválido.'); const movement = { id: id(), assetId: asset.id, originDepartmentId: asset.departmentId, destinationDepartmentId: dept.id, destinationRoomId: body.destinationRoomId || null, requestedBy: user.id, requesterRole: user.role, reason: body.reason, movementType: body.movementType || 'TEMPORARIA', status: 'PENDENTE', requestedAt: now(), expectedReturnAt: body.expectedReturnAt || null, approvedBy: null, approvedAt: null, completedAt: null }; s.movements.unshift(movement); record('MOVIMENTACAO_SOLICITADA', 'MOVEMENT', movement.id); save(); return { id: movement.id, message: 'Solicitação demonstrativa registrada e aguardando aprovação.' } as T; }
@@ -352,12 +417,24 @@ export async function localDemoBlob(pathInput: string): Promise<Blob> {
   const path = pathInput.split('?')[0] || '/'; const s = state();
   let m = path.match(/^\/assets\/([^/]+)\/photos\/([^/]+)\/file$/);
   if (m) { const blob = await photoGet(m[2]); if (!blob) throw new LocalApiError('Arquivo da fotografia não encontrado neste navegador.', 404); return blob; }
-  m = path.match(/^\/assets\/([^/]+)\/qr\.svg$/);
-  if (m) { const asset = s.assets.find((a) => a.id === m![1]); if (!asset) throw new LocalApiError('Equipamento não encontrado.', 404); const svg = await QRCode.toString(`HEOM-ASSET:${asset.id}`, { type: 'svg', errorCorrectionLevel: 'M', margin: 2, width: 320, color: { dark: '#153D5C', light: '#FFFFFF' } }); return new Blob([svg], { type: 'image/svg+xml' }); }
+  m = path.match(/^\/assets\/([^/]+)\/qr\.(svg|png)$/);
+  if (m) {
+    const asset = s.assets.find((a) => a.id === m![1] && !a.archivedAt);
+    if (!asset) throw new LocalApiError('Equipamento não encontrado.', 404);
+    const options = { errorCorrectionLevel: 'H' as const, margin: 4, width: 640, color: { dark: '#102A43', light: '#FFFFFF' } };
+    if (m[2] === 'svg') {
+      const svg = await QRCode.toString(`HEOM-ASSET:${asset.id}`, { ...options, type: 'svg' });
+      return new Blob([svg], { type: 'image/svg+xml' });
+    }
+    const dataUrl = await QRCode.toDataURL(`HEOM-ASSET:${asset.id}`, options);
+    const response = await fetch(dataUrl);
+    if (!response.ok) throw new LocalApiError('Falha ao gerar a versão PNG do QR Code.', 500);
+    return response.blob();
+  }
   if (path === '/reports/inventory.csv') {
-    const rows: unknown[][] = [['Patrimônio', 'Nome', 'Categoria', 'Fabricante', 'Modelo', 'Número de série', 'Patrimônio oficial', 'Setor', 'Ambiente', 'Situação', 'Criticidade', 'Origem'], ...s.assets.filter((a) => !a.archivedAt).map((a) => [a.assetNumber, a.name, a.category, a.manufacturer, a.model, a.serialNumber, a.officialPropertyNumber, s.departments.find((d) => d.id === a.departmentId)?.name, s.rooms.find((r) => r.id === a.roomId)?.name, a.operationalStatus, a.criticality, 'SIMULADO'])];
+    const rows: unknown[][] = [['Patrimônio', 'Nome', 'Categoria', 'Fabricante', 'Modelo', 'Número de série', 'Referência', 'Patrimônio oficial', 'Setor', 'Ambiente', 'Situação', 'Criticidade', 'Origem'], ...s.assets.filter((a) => !a.archivedAt).map((a) => [a.assetNumber, a.name, a.category, a.manufacturer, a.model, a.serialNumber, a.reference, a.officialPropertyNumber, s.departments.find((d) => d.id === a.departmentId)?.name, s.rooms.find((r) => r.id === a.roomId)?.name, a.operationalStatus, a.criticality, 'SIMULADO'])];
     return downloadCsv(rows);
   }
-  if (path === '/imports/inventory-template.csv') return downloadCsv([['Patrimônio', 'Nome', 'Categoria', 'Fabricante', 'Modelo', 'Número de série', 'Patrimônio oficial', 'Setor', 'Ambiente', 'Situação', 'Criticidade']]);
+  if (path === '/imports/inventory-template.csv') return downloadCsv([['Patrimônio', 'Nome', 'Categoria', 'Fabricante', 'Modelo', 'Número de série', 'Referência', 'Patrimônio oficial', 'Setor', 'Ambiente', 'Situação', 'Criticidade']]);
   throw new LocalApiError(`Arquivo demonstrativo não encontrado: ${path}`, 404);
 }

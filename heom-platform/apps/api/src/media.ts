@@ -1,17 +1,14 @@
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { mkdir, readFile, unlink, writeFile, mkdtemp, rm } from 'node:fs/promises';
-import { dirname, resolve, sep, isAbsolute, join } from 'node:path';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { dirname, resolve, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import multer from 'multer';
 import sharp from 'sharp';
 import QRCode from 'qrcode';
 
-const execFileAsync = promisify(execFile);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../');
-// A mídia do modo público é persistida no IndexedDB do navegador. Este diretório
-// serve apenas à execução local legada; nenhuma Function depende de filesystem.
+// O armazenamento por filesystem pertence somente ao modo institucional local.
+// A demonstração pública mantém fotografias no IndexedDB do navegador.
 const configuredStorage = process.env.HEOM_STORAGE_DIR || 'storage';
 const configuredMaxPhotoMb = Number(process.env.MAX_ASSET_PHOTO_MB || 12);
 const maxPhotoBytes = Number.isFinite(configuredMaxPhotoMb) ? Math.min(12, Math.max(1, configuredMaxPhotoMb)) * 1024 * 1024 : 12 * 1024 * 1024;
@@ -107,70 +104,11 @@ export async function deleteStoredPhoto(relativePath: string): Promise<void> {
 }
 
 export async function makeQrSvg(value: string): Promise<string> {
-  return QRCode.toString(value, { type: 'svg', errorCorrectionLevel: 'M', margin: 2, width: 320, color: { dark: '#153D5C', light: '#FFFFFF' } });
+  return QRCode.toString(value, { type: 'svg', errorCorrectionLevel: 'H', margin: 4, width: 640, color: { dark: '#102A43', light: '#FFFFFF' } });
 }
 
-function parseOcrFields(text: string) {
-  const pick = (patterns: RegExp[]) => {
-    for (const pattern of patterns) { const match = text.match(pattern); if (match?.[1]) return match[1].trim().replace(/[|]+/g, ' ').slice(0, 160); }
-    return null;
-  };
-  return {
-    manufacturer: pick([/(?:fabricante|manufacturer|marca|brand)\s*[:\-]?\s*([^\r\n]+)/i]),
-    model: pick([/(?:modelo|model)\s*[:\-]?\s*([^\r\n]+)/i]),
-    serialNumber: pick([/(?:n[ºo°.]?\s*(?:de\s*)?s[eé]rie|serial\s*(?:number|no\.?|#)?|s\s*\/\s*n)\s*[:#\-]?\s*([A-Z0-9./_-]{3,})/i]),
-    reference: pick([/(?:refer[eê]ncia|reference|ref\.?)\s*[:#\-]?\s*([A-Z0-9./_-]{2,})/i])
-  };
-}
-
-export type OcrResult = { status: 'PROCESSADO' | 'MOTOR_INDISPONIVEL' | 'SEM_TEXTO'; rawText: string; confidence: number | null; fields: ReturnType<typeof parseOcrFields>; message: string };
-
-export async function runLocalOcr(relativePath: string): Promise<OcrResult> {
-  const absolute = resolve(mediaRoot, relativePath);
-  if (!absolute.startsWith(`${mediaRoot}${sep}`)) throw new Error('Caminho de imagem inválido.');
-  const executable = process.env.TESSERACT_CMD || 'tesseract';
-  const language = process.env.TESSERACT_LANG || 'por+eng';
-  const temporaryDirectory = await mkdtemp(join(mediaRoot, '.ocr-'));
-  const processedPath = join(temporaryDirectory, 'preprocessada.png');
-  try {
-    // Pré-processamento inteiramente local: orientação EXIF, escala, tons de cinza,
-    // normalização de contraste e nitidez para facilitar a leitura das plaquetas.
-    await sharp(absolute, { failOn: 'error' })
-      .rotate()
-      .resize({ width: 2400, height: 2400, fit: 'inside', withoutEnlargement: false })
-      .greyscale()
-      .normalize()
-      .sharpen({ sigma: 1.1 })
-      .png()
-      .toFile(processedPath);
-
-    const { stdout } = await execFileAsync(executable, [processedPath, 'stdout', '-l', language, '--psm', '6', 'tsv'], { encoding: 'utf8', timeout: 45_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
-    const rows = stdout.split(/\r?\n/).slice(1);
-    const words: string[] = [];
-    const confidences: number[] = [];
-    for (const row of rows) {
-      const columns = row.split('\t');
-      const confidence = Number(columns[10]);
-      const word = columns.slice(11).join('\t').trim();
-      if (word) words.push(word);
-      if (Number.isFinite(confidence) && confidence >= 0 && word) confidences.push(confidence);
-    }
-    const rawText = words.join(' ').replace(/\s+/g, ' ').trim();
-    const confidence = confidences.length ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length / 100 : null;
-    return { status: rawText ? 'PROCESSADO' : 'SEM_TEXTO', rawText, confidence, fields: parseOcrFields(rawText), message: rawText ? 'Leitura local concluída após pré-processamento da imagem. Confira e confirme cada campo antes de atualizar o cadastro.' : 'Não foi identificado texto legível. Tente uma foto mais nítida, aproxime a câmera ou preencha os campos manualmente.' };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    const message = error instanceof Error ? error.message : 'Falha desconhecida no OCR.';
-    if (code === 'ENOENT' || /tesseract.*not found|não foi possível encontrar/i.test(message)) {
-      return { status: 'MOTOR_INDISPONIVEL', rawText: '', confidence: null, fields: parseOcrFields(''), message: 'Tesseract não está instalado ou não foi encontrado. Instale o mecanismo OCR local e reinicie a API.' };
-    }
-    if (/Failed loading language|Error opening data file|Could not initialize tesseract/i.test(message)) {
-      return { status: 'MOTOR_INDISPONIVEL', rawText: '', confidence: null, fields: parseOcrFields(''), message: `Pacote de idioma ${language} indisponível. Instale os dados de idioma português e inglês do Tesseract.` };
-    }
-    throw new Error(`Falha ao executar OCR local: ${message}`);
-  } finally {
-    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
-  }
+export async function makeQrPng(value: string): Promise<Buffer> {
+  return QRCode.toBuffer(value, { type: 'png', errorCorrectionLevel: 'H', margin: 4, width: 640, color: { dark: '#102A43', light: '#FFFFFF' } });
 }
 
 export function similarityLabel(similarity: number): 'ALTA_SIMILARIDADE' | 'POSSIVEL_CORRESPONDENCIA' | 'BAIXA_SIMILARIDADE' | 'SEM_CORRESPONDENCIA' {

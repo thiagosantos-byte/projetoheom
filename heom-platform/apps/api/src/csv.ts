@@ -7,6 +7,7 @@ export type InventoryCsvRow = {
   manufacturer: string | null;
   model: string | null;
   serialNumber: string | null;
+  reference: string | null;
   department: string | null;
   room: string | null;
   operationalStatus: 'EM_OPERACAO' | 'INDISPONIVEL' | 'EM_MANUTENCAO' | 'BAIXADO';
@@ -57,6 +58,7 @@ const aliases: Record<string, string[]> = {
   manufacturer: ['fabricante', 'marca', 'manufacturer', 'brand'],
   model: ['modelo', 'model'],
   serialNumber: ['numerodeserie', 'serie', 'serial', 'serialnumber'],
+  reference: ['referencia', 'reference', 'ref'],
   department: ['setor', 'departamento', 'department'],
   room: ['sala', 'ambiente', 'local', 'room'],
   operationalStatus: ['situacao', 'status', 'situacaooperacional', 'operationalstatus'],
@@ -85,6 +87,7 @@ export function parseInventoryCsv(input: string): InventoryCsvRow[] {
     const assetNumber = read(cells, 'assetNumber');
     const name = read(cells, 'name');
     const category = read(cells, 'category');
+    const department = read(cells, 'department');
     const statusRaw = normalizeHeader(read(cells, 'operationalStatus'));
     const criticalityRaw = normalizeHeader(read(cells, 'criticality'));
     const statusMap: Record<string, InventoryCsvRow['operationalStatus']> = {
@@ -99,14 +102,15 @@ export function parseInventoryCsv(input: string): InventoryCsvRow[] {
     if (assetNumber.length > 80) errors.push('Patrimônio excede 80 caracteres.');
     if (name.length < 2 || name.length > 180) errors.push('Nome deve conter entre 2 e 180 caracteres.');
     if (category.length < 2 || category.length > 100) errors.push('Categoria deve conter entre 2 e 100 caracteres.');
+    if (!department) errors.push('Setor obrigatório.');
     if (statusRaw && !statusMap[statusRaw]) errors.push('Situação operacional inválida.');
     if (criticalityRaw && !criticalityMap[criticalityRaw]) errors.push('Criticidade inválida.');
     return {
       rowNumber: index + 2, assetNumber,
       officialPropertyNumber: read(cells, 'officialPropertyNumber') || null,
       name, category, manufacturer: read(cells, 'manufacturer') || null,
-      model: read(cells, 'model') || null, serialNumber: read(cells, 'serialNumber') || null,
-      department: read(cells, 'department') || null, room: read(cells, 'room') || null,
+      model: read(cells, 'model') || null, serialNumber: read(cells, 'serialNumber') || null, reference: read(cells, 'reference') || null,
+      department: department || null, room: read(cells, 'room') || null,
       operationalStatus: statusMap[statusRaw] || 'EM_OPERACAO', criticality: criticalityMap[criticalityRaw] || 'MEDIA', errors
     };
   });

@@ -13,7 +13,7 @@ A implantação é exclusivamente demonstrativa. A Vercel publica o build React/
 |---|---|
 | Framework Preset | Vite |
 | Node.js Version | 22.x |
-| Install Command | `npm install` |
+| Install Command | `npm ci` |
 | Build Command | `npm run build` |
 | Output Directory | `apps/web/dist` |
 
@@ -49,8 +49,8 @@ As Vercel Functions não gravam a demonstração em `/tmp`. O handler serverless
 ## 5. Limitações funcionais da hospedagem
 
 - WebSocket persistente foi removido do fluxo demonstrativo; atualizações são feitas sob demanda.
-- OCR Tesseract.js é executado no navegador, fora da Function. O primeiro uso exige acesso à CDN para carregar script, worker, core WASM e modelos português/inglês. As imagens são processadas no dispositivo; a fotografia original é armazenada no IndexedDB da demonstração do navegador.
-- Leitura QR por câmera depende de `BarcodeDetector`; scanner USB/entrada manual são alternativas.
+- OCR Tesseract.js é executado no navegador, fora da Function. O primeiro uso exige acesso às CDN para carregar script, worker, core WASM e modelos português/inglês. As imagens são processadas no dispositivo; a fotografia original é armazenada no IndexedDB da demonstração do navegador.
+- Leitura QR usa `@zxing/browser` carregado sob demanda de unpkg; não depende exclusivamente de `BarcodeDetector`. Scanner USB e entrada manual continuam disponíveis.
 - Similaridade por imagem é dHash local, não IA de reconhecimento.
 - Planta e rastreamento são demonstrativos, sem hardware físico.
 

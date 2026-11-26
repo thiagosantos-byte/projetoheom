@@ -4,7 +4,7 @@ export type Department = { id: string; code: string; name: string; description?:
 export type Room = { id: string; code: string; name: string; floorLabel?: string; isRestricted: boolean; departmentId?: string; departmentName?: string; dataOrigin?: string; assetCount?: number };
 export type Asset = {
   id: string; assetNumber: string; officialPropertyNumber?: string | null; name: string; category: string; description?: string | null; roomId?: string | null;
-  manufacturer?: string | null; model?: string | null; serialNumber?: string | null; operationalStatus: string;
+  manufacturer?: string | null; model?: string | null; serialNumber?: string | null; reference?: string | null; operationalStatus: string;
   criticality: string; trackingStatus: string; trackingTagId?: string | null; lastDetectedAt?: string | null;
   dataOrigin: string; qrCode?: string | null; departmentName?: string; departmentId?: string; roomName?: string;
 };
