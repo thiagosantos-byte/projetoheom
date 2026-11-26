@@ -25,8 +25,8 @@ const entries = Object.fromEntries(content.split(/\r?\n/).filter(line => line &&
 if (!entries.JWT_SECRET || entries.JWT_SECRET.includes('SUBSTITUA_POR_') || entries.JWT_SECRET.length < 32) {
   console.error('ERRO: JWT_SECRET ausente ou inválido. Execute: bash ./scripts/configurar-ambiente.sh'); process.exit(1);
 }
-if (!entries.INITIAL_ADMIN_PASSWORD || entries.INITIAL_ADMIN_PASSWORD === 'TroqueEstaSenha!2026' || entries.INITIAL_ADMIN_PASSWORD.length < 14) {
-  console.error('ERRO: INITIAL_ADMIN_PASSWORD ausente ou inválida. Execute: bash ./scripts/configurar-ambiente.sh'); process.exit(1);
+if ((!entries.INITIAL_ADMIN_PASSWORD || entries.INITIAL_ADMIN_PASSWORD.length < 14) && entries.ENABLE_DEMO_PROFILES !== 'true') {
+  console.error('ERRO: configure uma senha administrativa ou habilite ENABLE_DEMO_PROFILES=true para entrar pelos cartões sem senha.'); process.exit(1);
 }
 NODE
 

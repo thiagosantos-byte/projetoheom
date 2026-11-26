@@ -11,7 +11,7 @@
 - Parâmetros SQL em consultas PostgreSQL.
 - Registro de auditoria para ações principais.
 - WebSocket exige autenticação no início da conexão.
-- Perfis rápidos de demonstração existem somente no servidor `demo-server.ts`, são desativados em `NODE_ENV=production` e não são registrados pelo servidor institucional.
+- Perfis rápidos sem senha existem somente no servidor `demo-server.ts`. Em produção, só são habilitados mediante `ENABLE_DEMO_PROFILES=true` na instância separada de demonstração; não são registrados pelo servidor institucional.
 - O modo demonstrativo vincula API e Vite à interface local (`127.0.0.1`) por padrão; o script institucional habilita o host de rede para a LAN cabeada.
 
 ## Riscos e tarefas obrigatórias antes da produção
@@ -26,7 +26,7 @@
 8. **Contas:** implementar política de troca de senha, bloqueio/recuperação, desativação e revisão periódica dos privilégios.
 9. **Infraestrutura:** aplicar firewall, hardening, atualização de dependências, monitoramento e backup protegido.
 10. **Testes:** executar avaliação de segurança, testes de autorização e análise de dependências antes de uso real.
-11. **Perfis de demonstração:** a entrada rápida não exige senha e deve permanecer restrita ao modo de avaliação local. Nunca habilitar nem publicar `demo-server.ts` em ambiente institucional.
+11. **Perfis de demonstração:** a entrada rápida não exige senha e permite que visitantes alterem registros fictícios. Use somente em uma instância isolada para avaliação pública, sem dados reais. Nunca habilitar `ENABLE_DEMO_PROFILES` no servidor institucional.
 
 ## Dados pessoais e pacientes
 

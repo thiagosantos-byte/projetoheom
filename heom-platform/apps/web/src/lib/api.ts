@@ -1,4 +1,23 @@
 const TOKEN_KEY = 'heom.local.session';
+const API_ORIGIN = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+
+export function apiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_ORIGIN}/api${normalizedPath}`;
+}
+
+export function websocketUrl(): string {
+  if (API_ORIGIN) {
+    const endpoint = new URL(API_ORIGIN);
+    endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
+    endpoint.pathname = '/ws';
+    endpoint.search = '';
+    endpoint.hash = '';
+    return endpoint.toString();
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+}
 let accessToken: string | null = localStorage.getItem(TOKEN_KEY);
 
 export function getToken() { return accessToken; }
@@ -19,8 +38,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   let response: Response;
-  try { response = await fetch(`/api${path}`, { ...init, headers }); }
-  catch { throw new ApiError('Não foi possível alcançar o servidor local. Verifique a conexão com a rede cabeada.', 0); }
+  try { response = await fetch(apiUrl(path), { ...init, headers }); }
+  catch { throw new ApiError('Não foi possível alcançar a API do HEOM. Verifique se o serviço está ativo e se VITE_API_URL está configurada.', 0); }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new ApiError(body.error || 'O sistema não conseguiu concluir a operação.', response.status, body);
   return body as T;
@@ -30,8 +49,8 @@ export async function apiBlob(path: string): Promise<Blob> {
   const headers = new Headers();
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   let response: Response;
-  try { response = await fetch(`/api${path}`, { headers }); }
-  catch { throw new ApiError('Não foi possível alcançar o servidor local.', 0); }
+  try { response = await fetch(apiUrl(path), { headers }); }
+  catch { throw new ApiError('Não foi possível alcançar a API do HEOM. Verifique se o serviço está ativo e se VITE_API_URL está configurada.', 0); }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(body.error || 'Não foi possível obter o arquivo.', response.status);

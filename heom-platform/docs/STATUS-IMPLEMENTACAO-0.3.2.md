@@ -15,7 +15,7 @@ O backend cria as contas ausentes no arquivo JSON, sem modificar usuários exist
 
 - O fluxo de entrada rápida existe somente no `demo-server.ts`.
 - O servidor PostgreSQL institucional (`server.ts`) não registra essas rotas.
-- O fluxo fica desativado se `ENABLE_DEMO_PROFILES=false` ou `NODE_ENV=production`.
+- Em `NODE_ENV=production`, o fluxo pode ser habilitado explicitamente com `ENABLE_DEMO_PROFILES=true` apenas na instância isolada de demonstração; caso contrário, permanece desativado.
 - O Vite e a API de demonstração ficam ligados a `127.0.0.1` por padrão.
 - O script institucional define `VITE_DEV_HOST=0.0.0.0` para permitir o acesso controlado pela LAN cabeada; a API institucional não possui entrada rápida.
 - Contas e dados são fictícios; nunca usar como acesso real do HEOM.

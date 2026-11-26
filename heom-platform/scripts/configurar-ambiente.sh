@@ -17,14 +17,15 @@ fi
 
 printf '\nCONFIGURAÇÃO INICIAL DO HEOM\n'
 printf 'O segredo JWT será gerado localmente e não será exibido.\n'
-printf 'A senha deve ter pelo menos 14 caracteres e usar somente letras, números ou ! @ # $ %% _ -\n\n'
+printf 'A senha administrativa é opcional no modo de demonstração.\n'
+printf 'Pressione Enter para usar somente os perfis de teste sem senha.\n\n'
 
-read -r -s -p 'Digite a senha inicial do administrador: ' ADMIN_PASSWORD
+read -r -s -p 'Senha administrativa individual (opcional): ' ADMIN_PASSWORD
 printf '\n'
 
-if [[ ${#ADMIN_PASSWORD} -lt 14 || ! "$ADMIN_PASSWORD" =~ ^[A-Za-z0-9!@#\$%_-]+$ ]]; then
+if [[ -n "$ADMIN_PASSWORD" && ( ${#ADMIN_PASSWORD} -lt 14 || ! "$ADMIN_PASSWORD" =~ ^[A-Za-z0-9!@#\$%_-]+$ ) ]]; then
   unset ADMIN_PASSWORD
-  echo 'ERRO: senha inválida. Use pelo menos 14 caracteres e somente os caracteres permitidos.' >&2
+  echo 'ERRO: quando informada, a senha deve ter pelo menos 14 caracteres e usar somente letras, números ou ! @ # $ % _ -.' >&2
   exit 1
 fi
 
@@ -37,7 +38,7 @@ const path = '.env';
 let content = fs.readFileSync(path, 'utf8');
 const updates = {
   JWT_SECRET: process.env.JWT_SECRET,
-  INITIAL_ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+  INITIAL_ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
 };
 
 for (const [key, value] of Object.entries(updates)) {
@@ -52,8 +53,10 @@ for (const [key, value] of Object.entries(updates)) {
 fs.writeFileSync(path, content.replace(/\r\n/g, '\n'), { mode: 0o600 });
 NODE
 
+ADMIN_PASSWORD_CONFIGURED=false
+if [[ -n "$ADMIN_PASSWORD" ]]; then ADMIN_PASSWORD_CONFIGURED=true; fi
 unset JWT_SECRET ADMIN_PASSWORD
 printf '\nConfiguração concluída.\n'
 printf 'JWT_SECRET: gerado localmente (não exibido).\n'
-printf 'INITIAL_ADMIN_PASSWORD: configurada.\n'
+if [[ "$ADMIN_PASSWORD_CONFIGURED" == true ]]; then printf 'INITIAL_ADMIN_PASSWORD: configurada.\n'; else printf 'INITIAL_ADMIN_PASSWORD: não configurada; use os perfis de teste sem senha.\n'; fi
 printf '\nPróximo comando: bash ./scripts/iniciar.sh\n'

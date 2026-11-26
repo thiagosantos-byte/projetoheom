@@ -12,7 +12,8 @@
     "db:seed": "tsx src/seed.ts",
     "test": "tsx --test src/domain.test.ts src/csv.test.ts src/visual.test.ts src/demo-accounts.test.ts",
     "dev:local": "tsx watch src/demo-server.ts",
-    "dev:infra": "tsx watch src/server.ts"
+    "dev:infra": "tsx watch src/server.ts",
+    "start:demo": "node dist/demo-server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

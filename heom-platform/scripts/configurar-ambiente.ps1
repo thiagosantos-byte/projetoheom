@@ -10,21 +10,17 @@ if (-not (Test-Path '.env')) {
 Write-Host ''
 Write-Host 'CONFIGURACAO INICIAL DO HEOM' -ForegroundColor Cyan
 Write-Host 'O segredo JWT sera gerado localmente e nao sera exibido.'
-Write-Host 'Crie uma senha de administrador com pelo menos 14 caracteres.'
-Write-Host 'Use letras, numeros e estes simbolos: ! @ # $ % _ -'
+Write-Host 'A senha administrativa e opcional no modo de demonstracao.'
+Write-Host 'Pressione Enter para usar somente os perfis de teste sem senha.'
 Write-Host ''
 
-$securePassword = Read-Host 'Digite a senha inicial do administrador' -AsSecureString
+$securePassword = Read-Host 'Senha administrativa individual (opcional)' -AsSecureString
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
-try {
-    $adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-}
-finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-}
-
-if ($adminPassword.Length -lt 14 -or $adminPassword -notmatch '^[A-Za-z0-9!@#$%_\-]+$') {
-    throw 'Senha invalida. Use pelo menos 14 caracteres e somente letras, numeros ou os simbolos ! @ # $ % _ -.'
+try { $adminPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+if ($adminPassword -and ($adminPassword.Length -lt 14 -or $adminPassword -notmatch '^[A-Za-z0-9!@#$%_\-]+$')) {
+    $securePassword.Dispose()
+    throw 'Quando informada, a senha deve ter pelo menos 14 caracteres e usar somente letras, numeros ou ! @ # $ % _ -.'
 }
 
 $bytes = New-Object byte[] 48
@@ -37,6 +33,7 @@ finally {
     $rng.Dispose()
 }
 
+$adminPasswordConfigured = -not [string]::IsNullOrWhiteSpace($adminPassword)
 $lines = Get-Content '.env'
 $jwtFound = $false
 $passwordFound = $false
@@ -64,5 +61,5 @@ $securePassword.Dispose()
 Write-Host ''
 Write-Host 'Configuracao concluida.' -ForegroundColor Green
 Write-Host 'JWT_SECRET: gerado localmente (nao exibido).'
-Write-Host 'INITIAL_ADMIN_PASSWORD: configurada.'
+if ($adminPasswordConfigured) { Write-Host 'INITIAL_ADMIN_PASSWORD: configurada.' } else { Write-Host 'INITIAL_ADMIN_PASSWORD: nao configurada; use os perfis de teste sem senha.' }
 Write-Host 'Agora execute: powershell -ExecutionPolicy Bypass -File .\scripts\iniciar.ps1' -ForegroundColor Yellow

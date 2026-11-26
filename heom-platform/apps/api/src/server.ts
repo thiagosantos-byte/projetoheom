@@ -22,7 +22,7 @@ declare global { namespace Express { interface Request { user?: AuthUser } } }
 
 const app = express();
 const server = http.createServer(app);
-const port = Number(process.env.APP_PORT || 4000);
+const port = Number(process.env.PORT || process.env.APP_PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET || '';
 const mqttTopic = process.env.MQTT_TOPIC || 'heom/tracking/observations';
 const mqttClient = mqtt.connect(process.env.MQTT_URL || 'mqtt://localhost:1883', {

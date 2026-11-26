@@ -4,7 +4,7 @@
 
 - Dois modos de execução nativa preservados: demonstração JSON e institucional PostgreSQL/MQTT; ambos sem Docker.
 - Autenticação local com hash de senha, token assinado e perfis RBAC nas rotas existentes.
-- Quatro perfis fictícios de avaliação (administrador, gestor, operador e consulta), criados idempotentemente no modo demonstrativo e acessíveis por cartões de entrada rápida na tela de login. A entrada rápida existe apenas no servidor demonstrativo e fica desativada em `NODE_ENV=production`.
+- Quatro perfis fictícios de avaliação (administrador, gestor, operador e consulta), criados idempotentemente no modo demonstrativo e acessíveis por cartões de entrada rápida na tela de login. A entrada rápida existe apenas no servidor demonstrativo. Em produção, só pode ser ativada explicitamente com `ENABLE_DEMO_PROFILES=true` numa instância isolada de avaliação.
 - Inventário básico, setores, ambientes, movimentações, aprovação/conclusão, alertas, notificações, auditoria e simulador de detecção.
 - Fotografias múltiplas por equipamento, upload JPG/PNG/WEBP, validação de MIME real, limite configurável até 12 MB, armazenamento no disco local e leitura autenticada.
 - Arquivamento lógico de fotografias; arquivos e resultados OCR ficam preservados para rastreabilidade.

@@ -47,10 +47,10 @@ declare global { namespace Express { interface Request { user?: AuthUser } } }
 
 const app = express();
 const server = http.createServer(app);
-const port = Number(process.env.APP_PORT || 4000);
+const port = Number(process.env.PORT || process.env.APP_PORT || 4000);
 const jwtSecret = process.env.JWT_SECRET || '';
-const demoProfilesEnabled = process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_PROFILES !== 'false';
-const dataFile = resolve(dirname(fileURLToPath(import.meta.url)), '../data/heom-demo.json');
+const demoProfilesEnabled = process.env.ENABLE_DEMO_PROFILES === 'true' || (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_PROFILES !== 'false');
+const dataFile = resolve(process.env.HEOM_DATA_FILE || resolve(dirname(fileURLToPath(import.meta.url)), '../data/heom-demo.json'));
 const uuid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 let store: Store = { users: [], departments: [], rooms: [], assets: [], movements: [], alerts: [], gateways: [], locationEvents: [], notifications: [], auditLogs: [], assetPhotos: [], ocrResults: [], maintenanceOrders: [] };
@@ -104,13 +104,22 @@ async function ensureDemoProfiles(): Promise<boolean> {
 }
 
 async function createInitialStore(): Promise<Store> {
+  // Na demonstração hospedada, as contas de avaliação entram pelos cartões
+  // de acesso rápido e não precisam de uma senha definida pelo avaliador.
+  // A conta administrativa tradicional é opcional e só é criada quando uma
+  // senha própria é configurada explicitamente.
   const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || '';
-  if (adminPassword.length < 14) throw new Error('Defina INITIAL_ADMIN_PASSWORD com pelo menos 14 caracteres no arquivo .env.');
-  const admin: DemoUser = {
-    id: uuid(), name: process.env.INITIAL_ADMIN_NAME || 'Administrador de demonstração',
-    email: (process.env.INITIAL_ADMIN_EMAIL || 'admin@heom.local').toLowerCase(),
-    role: 'ADMIN', passwordHash: await bcrypt.hash(adminPassword, 10), active: true, createdAt: now()
-  };
+  const users: DemoUser[] = [];
+  if (adminPassword) {
+    if (adminPassword.length < 14) throw new Error('INITIAL_ADMIN_PASSWORD deve ter pelo menos 14 caracteres quando configurada.');
+    users.push({
+      id: uuid(), name: process.env.INITIAL_ADMIN_NAME || 'Administrador institucional de teste',
+      email: (process.env.INITIAL_ADMIN_EMAIL || 'admin@heom.local').toLowerCase(),
+      role: 'ADMIN', passwordHash: await bcrypt.hash(adminPassword, 10), active: true, createdAt: now()
+    });
+  } else if (!demoProfilesEnabled) {
+    throw new Error('Configure INITIAL_ADMIN_PASSWORD ou habilite ENABLE_DEMO_PROFILES=true para o ambiente de demonstração.');
+  }
   const departmentNames: Array<[string, string, string]> = [
     ['DEMO-UTI', 'UTI — exemplo demonstrativo', 'Setor fictício para avaliação da plataforma.'],
     ['DEMO-ENG', 'Engenharia Clínica — exemplo', 'Setor fictício para avaliação da plataforma.'],
@@ -153,7 +162,7 @@ async function createInitialStore(): Promise<Store> {
     title: 'Ambiente de demonstração preparado', description: 'Os equipamentos e ambientes desta base são fictícios e servem apenas para validar os fluxos do sistema.',
     status: 'ABERTO', createdAt: now(), acknowledgedBy: null, acknowledgedAt: null, resolvedBy: null, resolvedAt: null, resolutionNote: null
   };
-  return { users: [admin], departments, rooms, assets, movements: [], alerts: [sampleAlert], gateways: [gateway], locationEvents: [], notifications: [], auditLogs: [], assetPhotos: [], ocrResults: [], maintenanceOrders: [] };
+  return { users, departments, rooms, assets, movements: [], alerts: [sampleAlert], gateways: [gateway], locationEvents: [], notifications: [], auditLogs: [], assetPhotos: [], ocrResults: [], maintenanceOrders: [] };
 }
 
 async function loadStore() {
@@ -752,10 +761,11 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error('[API local]', error); return res.status(500).json({ error: 'Não foi possível concluir a operação local.' });
 });
 
-server.listen(port, process.env.DEMO_BIND_HOST || '127.0.0.1', () => {
+const bindHost = process.env.HOST || process.env.DEMO_BIND_HOST || '127.0.0.1';
+server.listen(port, bindHost, () => {
   console.log('');
   console.log('HEOM — MODO DE DEMONSTRAÇÃO LOCAL (SEM DOCKER)');
-  console.log(`API: http://localhost:${port}/api/health`);
+  console.log(`API: http://${bindHost}:${port}/api/health`);
   console.log(`Perfis de teste: ${demoProfilesEnabled ? 'habilitados apenas neste modo demonstrativo local' : 'desativados'}`);
   console.log('Persistência: arquivo JSON local, com gravação em disco.');
   console.log('Rastreamento: simulador interno; sem PostgreSQL, MQTT ou hardware real.');

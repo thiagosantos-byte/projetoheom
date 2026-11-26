@@ -90,11 +90,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\iniciar.ps1
 - Fuso horário de apresentação: `America/Bahia`;
 - Locale: `pt-BR`.
 
-O usuário inicial utiliza o e-mail definido em `INITIAL_ADMIN_EMAIL`. A senha é a que foi configurada no `.env`; não há senha universal embutida.
+A conta administrativa tradicional com senha é opcional (`INITIAL_ADMIN_PASSWORD`). Para avaliação, utilize os perfis de teste sem senha.
 
 ### Perfis de teste no modo de demonstração
 
-Ao iniciar o modo demonstrativo local pela primeira vez, o HEOM cria quatro contas fictícias e exibe cartões **Perfis para testar** na tela de login:
+Ao iniciar o modo demonstrativo, o HEOM cria quatro contas fictícias e exibe cartões **Perfis para testar** na tela de login:
 
 | Perfil | Conta | O que permite avaliar |
 |---|---|---|
@@ -103,9 +103,9 @@ Ao iniciar o modo demonstrativo local pela primeira vez, o HEOM cria quatro cont
 | Operador de inventário | `operador.teste@heom.local` | Cadastros, fotografias e solicitações |
 | Acesso para consulta | `consulta.teste@heom.local` | Consulta sem permissão de alteração |
 
-Para entrar, basta selecionar **Entrar com este perfil** no cartão desejado. As senhas desses usuários são aleatórias, armazenadas apenas como hash, e não são exibidas. A entrada rápida usa uma rota exclusiva do servidor de demonstração local; ela não existe no servidor institucional.
+Para entrar, basta selecionar **Entrar sem senha** no cartão desejado. O servidor mantém apenas hashes de segredos aleatórios internos, que não são exibidos nem solicitados. A entrada rápida usa uma rota exclusiva do servidor de demonstração; ela não existe no servidor institucional.
 
-As contas são criadas automaticamente também quando uma base JSON de demonstração já existe, sem substituir contas existentes. É possível ocultar os cartões definindo `ENABLE_DEMO_PROFILES=false` no `.env`. O recurso também fica desativado quando `NODE_ENV=production`. Essas contas e os dados associados são fictícios; não usar o modo demonstrativo nem a entrada rápida para operação institucional. Consulte `docs/PERFIS-TESTE.md`.
+As contas são criadas automaticamente também quando uma base JSON de demonstração já existe, sem substituir contas existentes. Na hospedagem de demonstração, habilite explicitamente `ENABLE_DEMO_PROFILES=true`; em `NODE_ENV=production`, os cartões só aparecem quando essa variável é definida. Como qualquer visitante pode alterar os dados, use somente registros fictícios. Consulte `docs/PERFIS-TESTE.md`.
 
 ## Atualização visual 0.3.1
 
@@ -190,6 +190,10 @@ bash ./scripts/backup-demonstracao.sh
 ```
 
 O backup inclui o JSON local e as fotografias locais presentes em `storage`. No modo institucional, configure backups com `pg_dump` do PostgreSQL e cópia consistente do diretório de imagens, com política de retenção e teste de restauração definidos pela TI. Nunca considere um backup como validado antes de executar uma restauração de teste.
+
+## Demonstração hospedada (Vercel + Render, sem Docker)
+
+Consulte `docs/DEPLOY-VERCEL-RENDER.md` para publicar a interface no Vercel e a API demonstrativa no Render, configurar login administrativo, CORS e armazenamento. A hospedagem demonstrativa não substitui o modo institucional PostgreSQL + MQTT.
 
 ## Segurança e implantação
 

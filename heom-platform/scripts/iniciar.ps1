@@ -7,14 +7,15 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'npm não foi 
 
 if (-not (Test-Path '.env')) {
     Copy-Item '.env.example' '.env'
-    throw 'Arquivo .env criado. Configure JWT_SECRET e INITIAL_ADMIN_PASSWORD e execute scripts/configurar-ambiente.ps1.'
+    throw 'Arquivo .env criado. Execute scripts/configurar-ambiente.ps1 para gerar JWT_SECRET; a senha administrativa é opcional no modo de teste.'
 }
 
 $envLines = Get-Content '.env'
 $jwtLine = $envLines | Where-Object { $_ -match '^JWT_SECRET=' } | Select-Object -First 1
 $adminLine = $envLines | Where-Object { $_ -match '^INITIAL_ADMIN_PASSWORD=' } | Select-Object -First 1
 if (-not $jwtLine -or $jwtLine.Length -lt 45 -or $jwtLine -match 'SUBSTITUA_POR_') { throw 'JWT_SECRET ausente ou muito curto. Execute o configurador de ambiente.' }
-if (-not $adminLine -or $adminLine -match 'TroqueEstaSenha!2026') { throw 'INITIAL_ADMIN_PASSWORD inválida. Execute o configurador de ambiente.' }
+$demoLine = $envLines | Where-Object { $_ -match '^ENABLE_DEMO_PROFILES=' } | Select-Object -First 1
+if ((-not $adminLine -or $adminLine -notmatch '^INITIAL_ADMIN_PASSWORD=.{14,}$') -and $demoLine -notmatch '^ENABLE_DEMO_PROFILES=true$') { throw 'Configure uma senha administrativa ou habilite ENABLE_DEMO_PROFILES=true para entrar pelos cartões sem senha.' }
 
 if (-not (Test-Path 'node_modules')) {
     Write-Host 'Instalando dependências npm...' -ForegroundColor Cyan

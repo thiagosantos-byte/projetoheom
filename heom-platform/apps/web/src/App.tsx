@@ -6,7 +6,7 @@ import {
   RefreshCw, Search, Settings2, ShieldCheck, Signal, Siren, Stethoscope, Truck, Users,
   Wifi, WifiOff, X, LogOut, Wrench, Boxes, CircleDot, ExternalLink, Camera, FileSpreadsheet
 } from 'lucide-react';
-import { api, ApiError, formatClock, formatDate, getToken, labelStatus, setToken } from './lib/api';
+import { api, apiUrl, ApiError, formatClock, formatDate, getToken, labelStatus, setToken, websocketUrl } from './lib/api';
 import type { Alert, Asset, DashboardData, Department, Movement, Room, User } from './types';
 import IdentityCenter from './components/IdentityCenter';
 import MaintenanceCenter from './components/MaintenanceCenter';
@@ -61,17 +61,29 @@ function Modal({ title, description, onClose, children, wide = false }: { title:
 }
 
 function LoginScreen({ onLogin }: { onLogin: (user: User, token: string) => void }) {
+  const isDemoMode = import.meta.env.VITE_HEOM_MODE === 'demo';
   const [email, setEmail] = useState('admin@heom.local');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [demoProfiles, setDemoProfiles] = useState<DemoProfile[]>([]);
+  const [demoProfilesLoading, setDemoProfilesLoading] = useState(true);
+  const [demoProfilesError, setDemoProfilesError] = useState('');
 
   useEffect(() => {
     let mounted = true;
     api<{ data: DemoProfile[] }>('/demo/profiles')
-      .then((result) => { if (mounted) setDemoProfiles(result.data || []); })
-      .catch(() => { if (mounted) setDemoProfiles([]); });
+      .then((result) => {
+        if (!mounted) return;
+        setDemoProfiles(result.data || []);
+        setDemoProfilesError('');
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        setDemoProfiles([]);
+        setDemoProfilesError(err instanceof Error ? err.message : 'Não foi possível carregar os perfis de teste.');
+      })
+      .finally(() => { if (mounted) setDemoProfilesLoading(false); });
     return () => { mounted = false; };
   }, []);
 
@@ -106,6 +118,8 @@ function LoginScreen({ onLogin }: { onLogin: (user: User, token: string) => void
     }
   }
 
+  const showDemoProfiles = isDemoMode || demoProfiles.length > 0;
+
   return <main className="login-layout">
     <div className="login-brand-panel">
       <div className="brand-lockup"><div className="brand-mark"><Stethoscope size={25} /></div><div><strong>HEOM</strong><span>INTELIGÊNCIA PATRIMONIAL</span></div></div>
@@ -113,28 +127,33 @@ function LoginScreen({ onLogin }: { onLogin: (user: User, token: string) => void
       <div className="login-foot"><span>Hospital Especializado Octávio Mangabeira</span><span>Salvador · Bahia</span></div>
     </div>
     <div className="login-form-panel"><form className="login-form" onSubmit={submit}>
-      <div className="login-kicker"><ShieldCheck size={17} /> {demoProfiles.length > 0 ? 'AMBIENTE DE DEMONSTRAÇÃO' : 'ACESSO INSTITUCIONAL'}</div>
-      <h2>Entrar no sistema</h2><p className="muted">Utilize suas credenciais locais para acessar a plataforma.</p>
-      <label>E-mail institucional<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" placeholder="nome@instituicao.gov.br" /></label>
-      <label>Senha<input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" placeholder="Digite sua senha" /></label>
-      {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
-      <button className="button button-primary button-full" disabled={busy}>{busy ? 'Validando acesso…' : 'Acessar plataforma'}</button>
+      <div className="login-kicker"><ShieldCheck size={17} /> {showDemoProfiles ? 'AMBIENTE DE DEMONSTRAÇÃO' : 'ACESSO INSTITUCIONAL'}</div>
+      <h2>{isDemoMode ? 'Entrar na demonstração' : 'Entrar no sistema'}</h2>
+      <p className="muted">{isDemoMode ? 'Escolha um perfil de avaliação para acessar o sistema. Não é necessário informar e-mail ou senha.' : 'Utilize suas credenciais de acesso para entrar na plataforma.'}</p>
 
-      {demoProfiles.length > 0 && <section className="demo-access" aria-label="Perfis de demonstração">
-        <div className="demo-access-heading"><div><span className="eyebrow">AMBIENTE DE AVALIAÇÃO</span><h3>Perfis para testar</h3></div><span className="demo-access-badge">SIMULADO</span></div>
-        <p className="demo-access-copy">Entre com diferentes níveis de permissão para conhecer os fluxos do sistema. Basta selecionar um perfil.</p>
-        <div className="demo-profile-grid">
+      {!isDemoMode && <>
+        <label>E-mail institucional<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" placeholder="nome@instituicao.gov.br" /></label>
+        <label>Senha<input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" placeholder="Digite sua senha" /></label>
+        {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
+        <button className="button button-primary button-full" disabled={busy}>{busy ? 'Validando acesso…' : 'Acessar plataforma'}</button>
+      </>}
+
+      {showDemoProfiles && <section className="demo-access" aria-label="Perfis de demonstração">
+        <div className="demo-access-heading"><div><span className="eyebrow">ACESSO SEM SENHA</span><h3>Escolha um perfil para testar</h3></div><span className="demo-access-badge">SIMULADO</span></div>
+        <p className="demo-access-copy">Cada opção abre o sistema com permissões diferentes. Os dados são fictícios e nenhuma senha é solicitada.</p>
+        {demoProfilesLoading ? <p className="muted">Carregando perfis de teste…</p> : demoProfiles.length > 0 ? <div className="demo-profile-grid">
           {demoProfiles.map((profile) => <button key={profile.email} type="button" className="demo-profile-card" disabled={busy} onClick={() => void enterDemoProfile(profile)}>
             <span className={`demo-profile-role role-${profile.role.toLowerCase()}`}>{labelStatus(profile.role)}</span>
             <strong>{profile.name}</strong>
             <span className="demo-profile-email">{profile.email}</span>
             <small>{profile.description}</small>
-            <span className="demo-profile-action">{busy ? 'Abrindo perfil…' : 'Entrar com este perfil'} <span aria-hidden="true">↗</span></span>
+            <span className="demo-profile-action">{busy ? 'Abrindo perfil…' : 'Entrar sem senha'} <span aria-hidden="true">↗</span></span>
           </button>)}
-        </div>
-        <p className="demo-access-warning">Contas e dados fictícios, disponíveis somente no modo de demonstração local. Não representam usuários oficiais do HEOM.</p>
+        </div> : <div className="form-error"><AlertTriangle size={16} />{demoProfilesError || 'Os perfis de teste não foram encontrados. Verifique se a API está publicada e se ENABLE_DEMO_PROFILES=true.'}</div>}
+        {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
+        <p className="demo-access-warning">Ambiente público de avaliação. Todos os cadastros são simulados e podem ser alterados por outras pessoas que acessarem esta demonstração. Não insira dados reais.</p>
       </section>}
-      <div className="login-security"><LockIcon /> <span>Autenticação e dados processados na infraestrutura local.</span></div>
+      <div className="login-security"><LockIcon /> <span>{isDemoMode ? 'Acesso temporário de avaliação, sem senha pessoal.' : 'Autenticação protegida pela API configurada para este ambiente.'}</span></div>
     </form></div>
   </main>;
 }
@@ -175,7 +194,7 @@ function App() {
   }, []);
 
   const loadHealth = useCallback(async () => {
-    try { const result = await fetch('/api/health'); setHealth(await result.json()); }
+    try { const result = await fetch(apiUrl('/health')); setHealth(await result.json()); }
     catch { setHealth(null); }
   }, []);
 
@@ -223,8 +242,7 @@ function App() {
     let disposed = false;
     const connect = () => {
       if (disposed) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      socket = new WebSocket(websocketUrl());
       socket.onopen = () => socket?.send(JSON.stringify({ type: 'AUTH', token: getToken() }));
       socket.onmessage = (event) => {
         try {
