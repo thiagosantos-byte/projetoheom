@@ -764,7 +764,7 @@ app.post('/api/admin/users', authenticate, allowRoles('ADMIN'), async (req, res)
   return res.status(201).json({ data: { id: user.id, name: user.name, email: user.email, role: user.role, active: user.active } });
 });
 
-await loadStore();
+const storeReady = loadStore();
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const message = error instanceof Error ? error.message : 'Falha inesperada na requisição.';
   if (message.includes('Formato inválido') || message.includes('File too large') || message.includes('Unexpected field') || message.includes('Too many files')) return res.status(400).json({ error: message.includes('File too large') ? `A imagem excede o limite de ${maxAssetPhotoMb} MB.` : message });
@@ -777,14 +777,19 @@ const bindHost = process.env.HOST || process.env.DEMO_BIND_HOST || '127.0.0.1';
 // Na Vercel, o Express é exportado para ser atendido por uma Function HTTP;
 // Functions não mantêm um servidor TCP/WebSocket permanente.
 if (process.env.VERCEL !== '1') {
-  server.listen(port, bindHost, () => {
-    console.log('');
-    console.log('HEOM — MODO DE DEMONSTRAÇÃO LOCAL (SEM DOCKER)');
-    console.log(`API: http://${bindHost}:${port}/api/health`);
-    console.log(`Perfis de teste: ${demoProfilesEnabled ? 'habilitados no modo demonstrativo' : 'desativados'}`);
-    console.log(`Persistência: ${dataFile}`);
-    console.log('Rastreamento: simulador interno; sem PostgreSQL, MQTT ou hardware real.');
-    console.log('');
+  storeReady.then(() => {
+    server.listen(port, bindHost, () => {
+      console.log('');
+      console.log('HEOM — MODO DE DEMONSTRAÇÃO LOCAL (SEM DOCKER)');
+      console.log('API: http://' + bindHost + ':' + port + '/api/health');
+      console.log('Perfis de teste: ' + (demoProfilesEnabled ? 'habilitados no modo demonstrativo' : 'desativados'));
+      console.log('Persistência: ' + dataFile);
+      console.log('Rastreamento: simulador interno; sem PostgreSQL, MQTT ou hardware real.');
+      console.log('');
+    });
+  }).catch((error) => {
+    console.error('[HEOM] Falha ao inicializar a base demonstrativa:', error);
+    process.exitCode = 1;
   });
 
   function shutdown() {
@@ -797,4 +802,13 @@ if (process.env.VERCEL !== '1') {
   process.once('SIGTERM', shutdown);
 }
 
-export default app;
+// A Vercel atende por HTTP serverless: aguarda a base sem top-level await.
+export default async function demoApiHandler(req: Request, res: Response) {
+  try {
+    await storeReady;
+    return app(req, res);
+  } catch (error) {
+    console.error('[HEOM] Falha na inicialização da API:', error);
+    return res.status(500).json({ error: 'A API não conseguiu inicializar. Consulte os logs do deploy.' });
+  }
+}

@@ -29,6 +29,13 @@ const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'admin', label: 'Administração', icon: Settings2 }
 ];
 
+const DEMO_PROFILE_EMAILS: Record<User['role'], string> = {
+  ADMIN: 'admin.teste@heom.local',
+  GESTOR: 'gestor.teste@heom.local',
+  OPERADOR: 'operador.teste@heom.local',
+  CONSULTA: 'consulta.teste@heom.local'
+};
+
 function useToast() {
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const show = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -162,6 +169,8 @@ function LockIcon() { return <ShieldCheck size={16} />; }
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [demoInitError, setDemoInitError] = useState('');
+  const [profileSwitchBusy, setProfileSwitchBusy] = useState(false);
   const [page, setPage] = useState<Page>('overview');
   const [health, setHealth] = useState<Health | null>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
@@ -188,9 +197,34 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) { setInitializing(false); return; }
-    api<{ user: User }>('/auth/me').then((result) => setUser(result.user)).catch(() => setToken(null)).finally(() => setInitializing(false));
+    let cancelled = false;
+    const start = async () => {
+      try {
+        if (import.meta.env.VITE_HEOM_MODE === 'demo') {
+          // Entrada direta: token de demonstração gerado internamente pela API.
+          const result = await api<{ token: string; user: User }>('/demo/quick-login', {
+            method: 'POST', body: JSON.stringify({ email: DEMO_PROFILE_EMAILS.ADMIN })
+          });
+          if (!cancelled) { setToken(result.token); setUser(result.user); }
+          return;
+        }
+        const token = getToken();
+        if (!token) return;
+        const result = await api<{ user: User }>('/auth/me');
+        if (!cancelled) setUser(result.user);
+      } catch (err) {
+        if (!cancelled) {
+          setToken(null);
+          if (import.meta.env.VITE_HEOM_MODE === 'demo') {
+            setDemoInitError(err instanceof Error ? err.message : 'Não foi possível iniciar a demonstração.');
+          }
+        }
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    };
+    void start();
+    return () => { cancelled = true; };
   }, []);
 
   const loadHealth = useCallback(async () => {
@@ -261,6 +295,24 @@ function App() {
   const refreshAll = async () => { await loadHealth(); await loadPage(); show('Informações atualizadas.', 'info'); };
   const login = (loggedUser: User, token: string) => { setToken(token); setUser(loggedUser); setPage('overview'); };
   const logout = () => { setToken(null); setUser(null); setDashboard(null); setNotifications([]); };
+
+  async function switchDemoProfile(role: User['role']) {
+    setProfileSwitchBusy(true);
+    try {
+      const result = await api<{ token: string; user: User }>('/demo/quick-login', {
+        method: 'POST', body: JSON.stringify({ email: DEMO_PROFILE_EMAILS[role] })
+      });
+      setToken(result.token);
+      setUser(result.user);
+      setPage('overview');
+      setNotificationOpen(false);
+      show(`Perfil alterado para ${labelStatus(role)}.`, 'info');
+    } catch (err) {
+      show(err instanceof Error ? err.message : 'Não foi possível trocar o perfil.', 'error');
+    } finally {
+      setProfileSwitchBusy(false);
+    }
+  }
 
   async function saveAsset(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true);
@@ -341,6 +393,15 @@ function App() {
   }
 
   if (initializing) return <div className="app-loading"><div className="brand-mark"><Stethoscope size={24} /></div><span>Preparando ambiente local…</span></div>;
+  if (!user && import.meta.env.VITE_HEOM_MODE === 'demo') return <main className="demo-start-error">
+    <div className="brand-mark"><Stethoscope size={24} /></div>
+    <span className="eyebrow">HEOM · AMBIENTE DE DEMONSTRAÇÃO</span>
+    <h1>Não foi possível abrir o ambiente</h1>
+    <p>{demoInitError || 'A API ainda está inicializando. Verifique a publicação e tente novamente.'}</p>
+    <button className="button button-primary" onClick={() => window.location.reload()}>Tentar novamente</button>
+    <small>Não é necessário criar conta nem informar senha.</small>
+    {toast && <Toast toast={toast} />}
+  </main>;
   if (!user) return <><LoginScreen onLogin={login} />{toast && <Toast toast={toast} />}</>;
 
   const activeTitle = NAV.find((item) => item.id === page)?.label || 'Visão geral';
@@ -359,7 +420,7 @@ function App() {
           <button className="icon-button notification-button" aria-label="Notificações" onClick={() => { setNotificationOpen((value) => !value); void loadNotifications(); }}><Bell size={18} />{unreadCount > 0 && <i>{unreadCount}</i>}</button>
           {notificationOpen && <div className="notification-popover"><div className="popover-heading"><strong>Notificações</strong><button className="text-button" onClick={() => void loadNotifications()}>Atualizar</button></div>{notifications.length ? notifications.map((item) => <div className={`notification-item ${item.readAt ? 'read' : 'unread'}`} key={item.id}><span className="notification-dot" /><div><strong>{item.title}</strong><p>{item.message}</p><small>{formatDate(item.createdAt)} · {item.readAt ? 'Lida' : 'Não lida'}</small>{!item.readAt && <button className="text-button" onClick={() => void markNotificationRead(item.id)}>Marcar como lida</button>}</div></div>) : <div className="empty-inline">Nenhuma notificação registrada.</div>}</div>}
         </div>
-        <div className="user-menu"><div className="avatar">{user.name.split(' ').slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</div><div className="user-copy"><strong>{user.name}</strong><span>{labelStatus(user.role)}</span></div><button className="icon-button logout" aria-label="Sair" onClick={logout}><LogOut size={17} /></button></div>
+        <div className="user-menu"><div className="avatar">{user.name.split(' ').slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</div><div className="user-copy"><strong>{import.meta.env.VITE_HEOM_MODE === 'demo' ? 'Demonstração aberta' : user.name}</strong><span>{import.meta.env.VITE_HEOM_MODE === 'demo' ? 'Perfil ativo · ' + labelStatus(user.role) : labelStatus(user.role)}</span></div>{import.meta.env.VITE_HEOM_MODE === 'demo' ? <select className="demo-profile-select" aria-label="Trocar perfil de demonstração" value={user.role} disabled={profileSwitchBusy} onChange={(event) => void switchDemoProfile(event.target.value as User['role'])}><option value="ADMIN">Administrador</option><option value="GESTOR">Gestor</option><option value="OPERADOR">Operador</option><option value="CONSULTA">Consulta</option></select> : <button className="icon-button logout" aria-label="Sair" onClick={logout}><LogOut size={17} /></button>}</div>
       </div>
     </header>
 

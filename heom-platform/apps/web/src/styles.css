@@ -836,3 +836,33 @@ tbody td strong { font-size: 11px; }
   .demo-profile-card > small { min-height: 0; }
   .login-form-panel { padding: 28px 18px 38px; }
 }
+
+
+/* HEOM DEMO: direct access without login */
+.demo-profile-select {
+  max-width: 170px;
+  min-width: 132px;
+  border: 1px solid var(--border, #d8e0e8);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  color: var(--text, #223044);
+  padding: 9px 30px 9px 11px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+.demo-start-error {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+  background: var(--page, #f4f7fb);
+  color: var(--text, #223044);
+}
+.demo-start-error h1 { margin: 0; font-size: clamp(25px, 4vw, 38px); }
+.demo-start-error p { max-width: 560px; color: var(--muted, #64748b); }
+.demo-start-error small { color: var(--muted, #64748b); }
