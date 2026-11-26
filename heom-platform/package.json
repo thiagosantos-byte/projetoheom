@@ -1,0 +1,27 @@
+{
+  "name": "heom-plataforma",
+  "version": "0.3.2",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n API,WEB -c blue,green \"npm run dev -w @heom/api\" \"npm run dev -w @heom/web\"",
+    "build": "npm run build -w @heom/api && npm run build -w @heom/web",
+    "typecheck": "npm run typecheck -w @heom/api && npm run typecheck -w @heom/web",
+    "db:migrate": "npm run db:migrate -w @heom/api",
+    "db:seed": "npm run db:seed -w @heom/api",
+    "test": "npm run test -w @heom/api",
+    "dev:local": "concurrently -n API,WEB -c blue,green \"npm run dev:local -w @heom/api\" \"npm run dev -w @heom/web\"",
+    "dev:infra": "concurrently -n API,WEB -c blue,green \"npm run dev:infra -w @heom/api\" \"npm run dev -w @heom/web\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  }
+}
