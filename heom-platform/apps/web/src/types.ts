@@ -1,5 +1,5 @@
 export type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
-export type User = { id: string; name: string; email: string; role: Role };
+export type User = { id: string; name: string; role: Role };
 export type Department = { id: string; code: string; name: string; description?: string; dataOrigin?: string };
 export type Room = { id: string; code: string; name: string; floorLabel?: string; isRestricted: boolean; departmentId?: string; departmentName?: string; dataOrigin?: string; assetCount?: number };
 export type Asset = {

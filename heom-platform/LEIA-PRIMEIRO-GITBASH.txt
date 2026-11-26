@@ -1,59 +1,46 @@
-HEOM 0.3.2 — PACOTE NATIVO PARA GIT BASH (ZERO DOCKER)
+HEOM 0.4.0 — APLICAÇÃO INTEGRADA
 
-ESTA PASTA É A RAIZ DO PROJETO. Abra o Git Bash dentro dela antes de executar npm.
+Abra o Git Bash na pasta heom-platform (onde está o package.json principal).
 
 REQUISITOS:
-- Node.js 22 ou superior compatível;
-- npm;
-- para OCR: Tesseract instalado localmente com idiomas por e eng;
-- modo institucional: PostgreSQL e Mosquitto instalados nativamente. Não são usados no modo de demonstração.
+- Node.js 22.x;
+- npm 10 ou superior.
 
-PRIMEIRA EXECUÇÃO — DEMONSTRAÇÃO SEM DOCKER:
-1. Copie a configuração de exemplo:
-   cp .env.example .env
-2. Gere segredo JWT e senha administrativa local:
-   bash ./scripts/configurar-ambiente.sh
-3. Instale as dependências:
+PRIMEIRA EXECUÇÃO:
+1. Instale todas as dependências com uma única instalação:
    npm install
-4. Se o npm 11 bloquear o postinstall do esbuild:
-   npm install-scripts approve esbuild
-   npm rebuild esbuild
-5. Execute as verificações:
+2. Inicie a aplicação integrada:
+   npm run dev
+3. Abra no navegador:
+   http://localhost:5173
+
+O comando npm run dev inicia um processo Node e uma única porta. Interface React/Vite e API Express são servidas pelo mesmo endereço. Não abra outro terminal para iniciar backend ou frontend. Não é necessário criar .env nem configurar PostgreSQL, Supabase, MQTT, JWT, e-mail ou senha.
+
+Na primeira visita, selecione um perfil demonstrativo: Administrador, Gestor, Operador ou Consulta. O seletor do cabeçalho permite alternar o perfil durante o uso.
+
+BUILD E TESTES:
    npm run typecheck
-   npm run test
+   npm test
    npm run build
-6. Inicie a plataforma:
-   bash ./scripts/iniciar.sh
-7. Abra:
-   Interface: http://localhost:5173
-   API:       http://localhost:4000/api/health
-8. Para encerrar, pressione Ctrl+C no terminal que iniciou a aplicação.
+   npm start
 
-MODO INSTITUCIONAL NATIVO (TAMBÉM SEM DOCKER):
-- Instale e configure PostgreSQL e Mosquitto como serviços nativos do sistema operacional.
-- Ajuste DATABASE_URL, MQTT_URL, MQTT_USERNAME e MQTT_PASSWORD no .env.
-- Execute:
-  bash ./scripts/iniciar-institucional.sh
-- Esse modo aplica migrações e seed, mas NÃO instala nem inicia PostgreSQL/Mosquitto por você.
+npm start executa o build já gerado na mesma porta 5173.
 
-RECURSOS ENTREGUES:
-- inventário, movimentações, alertas, autenticação local, auditoria e simulador de rastreamento;
-- fotografias locais múltiplas por equipamento;
-- OCR local com Tesseract e pré-processamento de imagem;
-- busca visual aproximada dHash (não é identificação por IA nem prova de identidade);
-- QR Code individual, leitura por BarcodeDetector e campo para leitor USB/manual;
-- manutenção e importação/exportação CSV validada.
+PUBLICAÇÃO VERCEL:
+- Repositório: thiagosantos-byte/projetoheom
+- Root Directory: heom-platform
+- Install Command: npm install
+- Build Command: npm run build
+- Output Directory: apps/web/dist
+- Nenhuma variável de ambiente é necessária para o modo de demonstração.
 
-LIMITAÇÕES IMPORTANTES:
-- demonstração usa arquivo JSON e não é adequada para operação hospitalar multiusuário de produção;
-- modo institucional depende dos serviços nativos PostgreSQL e Mosquitto instalados e configurados;
-- OCR requer Tesseract e idiomas por/eng no computador que executa a API;
-- busca dHash é simples e pode errar; confirme sempre plaqueta, patrimônio e número de série;
-- importação XLSX e geração automatizada de PDF personalizado não estão implementadas; CSV está disponível;
-- sensores BLE/RFID/UWB reais, planta arquitetônica oficial, gateway físico e notificações Windows com navegador fechado precisam de implantação/homologação;
-- funcionamento sem internet pública não equivale a operação sem rede: clientes precisam alcançar o servidor pela LAN cabeada.
+DADOS E LIMITES:
+- Todos os registros são fictícios e aparecem como SIMULADO.
+- Dados: localStorage; fotos: IndexedDB. Cada navegador mantém sua própria demonstração.
+- O OCR automático não está disponível no modo web; use a revisão/transcrição manual.
+- A comparação visual usa dHash; não é reconhecimento por IA.
+- O QR por câmera depende de BarcodeDetector; também há entrada manual/scanner USB.
+- A planta e o rastreamento são ilustrativos/simulados; não há gateways físicos.
+- Os perfis não são autenticação nem proteção adequada para produção.
 
-PERFIS DE TESTE: na tela de login do modo demonstrativo aparecem quatro cartões (Administrador, Gestor, Operador e Consulta). Clique em “Entrar com este perfil”; não é necessário digitar senha. Essas contas são fictícias e não existem no modo institucional.
-
-DADOS DE DEMONSTRAÇÃO SÃO FICTÍCIOS E MARCADOS COMO SIMULADO. Não inserir dados de pacientes.
-Consulte README.md e docs/ para detalhes, arquitetura e limitações de homologação.
+Para detalhes, consulte README.md e docs/.

@@ -1,37 +1,28 @@
-# Segurança — avaliação da versão 0.3.2
+# Segurança e uso adequado — HEOM 0.4.0
 
-## Implementado nesta base
+## Modo demonstrativo público
 
-- Senhas armazenadas com bcrypt (custo 12).
-- Autenticação local com JWT e expiração configurável.
-- Perfis básicos: ADMIN, GESTOR, OPERADOR e CONSULTA.
-- Verificação de perfil no backend para operações privilegiadas.
-- Validação de payloads por Zod em fluxos principais.
-- Helmet, CORS configurável, limite de requisições no login e limite de corpo JSON.
-- Parâmetros SQL em consultas PostgreSQL.
-- Registro de auditoria para ações principais.
-- WebSocket exige autenticação no início da conexão.
-- Perfis rápidos sem senha existem somente no servidor `demo-server.ts`. Em produção, só são habilitados mediante `ENABLE_DEMO_PROFILES=true` na instância separada de demonstração; não são registrados pelo servidor institucional.
-- O modo demonstrativo vincula API e Vite à interface local (`127.0.0.1`) por padrão; o script institucional habilita o host de rede para a LAN cabeada.
+- Os perfis ADMIN, GESTOR, OPERADOR e CONSULTA são personagens locais escolhidos pelo visitante.
+- Não existem contas, e-mails, senhas, tokens ou provedor de autenticação no fluxo público.
+- As permissões por perfil existem para demonstrar a experiência da interface e as operações locais. Como o visitante controla o navegador e os dados, elas **não são uma barreira de segurança**.
+- Todo o inventário da demonstração é fictício e fica no armazenamento do navegador atual. Não há compartilhamento ou integridade garantida entre visitantes.
+- Não inserir informações de pacientes, colaboradores, equipamentos reais, números patrimoniais oficiais ou qualquer dado institucional.
+- A aplicação pública não deve ser utilizada para decisões clínicas, manutenção real ou operação patrimonial de hospital.
 
-## Riscos e tarefas obrigatórias antes da produção
+## Antes de uma implantação institucional
 
-1. **JWT:** alterar o segredo de exemplo; implantar rotação e revogação de sessão conforme política institucional. Nesta versão, o token é mantido no armazenamento local do navegador.
-2. **MQTT:** a configuração de desenvolvimento permite conexão anônima. Produção exige autenticação por gateway, ACL por tópico, TLS quando aplicável e segregação de rede.
-3. **HTTPS:** o servidor de desenvolvimento não configura TLS. Implantar proxy reverso interno com certificado confiável.
-4. **CORS e origens:** definir a lista exata de hosts institucionais autorizados.
-5. **Cookies/sessões:** avaliar migração para cookies `HttpOnly`, `Secure` e `SameSite` em implantação final.
-6. **Auditoria:** revisar imutabilidade, retenção, acesso e proteção contra alteração indevida dos registros.
-7. **LGPD:** validar finalidade, base legal, minimização, transparência, retenção e acesso com encarregado e áreas responsáveis.
-8. **Contas:** implementar política de troca de senha, bloqueio/recuperação, desativação e revisão periódica dos privilégios.
-9. **Infraestrutura:** aplicar firewall, hardening, atualização de dependências, monitoramento e backup protegido.
-10. **Testes:** executar avaliação de segurança, testes de autorização e análise de dependências antes de uso real.
-11. **Perfis de demonstração:** a entrada rápida não exige senha e permite que visitantes alterem registros fictícios. Use somente em uma instância isolada para avaliação pública, sem dados reais. Nunca habilitar `ENABLE_DEMO_PROFILES` no servidor institucional.
+A base legada `apps/api/src/server.ts` e as migrations PostgreSQL/MQTT não são usadas pelo modo demonstrativo padrão. Uma implantação institucional deve ser tratada como outro ambiente, com arquitetura e controles próprios, incluindo no mínimo:
 
-## Dados pessoais e pacientes
-
-O modelo inicial não inclui dados de pacientes. Dados de colaboradores são limitados ao necessário para autenticação e responsabilização de operações. O sistema tem finalidade de rastrear ativos, não de vigiar funcionários.
+1. autenticação institucional, sessões seguras, MFA quando aplicável e política de recuperação de conta;
+2. autorização RBAC validada no servidor para cada operação;
+3. banco de dados persistente, backup, retenção e restauração testada;
+4. armazenamento de mídia privado, controle de acesso e antivírus/validação de conteúdo;
+5. TLS, gestão de segredos, firewall, hardening, monitoramento e atualização de dependências;
+6. ACL e TLS para MQTT, autenticação dos gateways e validação dos eventos;
+7. trilha de auditoria protegida contra alteração indevida;
+8. revisão LGPD, finalidade, minimização, retenção e acesso com as áreas responsáveis;
+9. testes de segurança, autorização, carga, recuperação e homologação técnica/operacional.
 
 ## Não homologado
 
-Este documento não constitui certificação de conformidade LGPD, avaliação de impacto, pentest ou parecer de segurança institucional.
+Este material não é certificação de conformidade LGPD, pentest, parecer de segurança nem autorização para uso em ambiente hospitalar real.

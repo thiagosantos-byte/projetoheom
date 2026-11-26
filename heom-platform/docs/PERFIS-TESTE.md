@@ -1,46 +1,30 @@
-# Perfis de teste do HEOM 0.3.2
+# Perfis de demonstração HEOM 0.4.0
 
-## Objetivo
+Os quatro perfis são personas selecionáveis, sem contas autenticadas.
 
-Permitir que avaliadores experimentem os diferentes níveis de permissão sem criar contas manualmente nem digitar senhas.
-
-## Perfis disponíveis
-
-| Nome exibido | E-mail | Perfil |
+| Perfil | Identificador funcional | Escopo |
 |---|---|---|
-| Administrador de teste | `admin.teste@heom.local` | `ADMIN` |
-| Gestor patrimonial | `gestor.teste@heom.local` | `GESTOR` |
-| Operador de inventário | `operador.teste@heom.local` | `OPERADOR` |
-| Acesso para consulta | `consulta.teste@heom.local` | `CONSULTA` |
+| Administrador | `ADMIN` | Administração demonstrativa, lista de perfis, gateways, configurações e acesso operacional. |
+| Gestor | `GESTOR` | Gestão de inventário, movimentações, aprovação, alertas e manutenção. |
+| Operador | `OPERADOR` | Cadastro/edição, fotos, manutenção, solicitações e operações permitidas. |
+| Consulta | `CONSULTA` | Somente leitura. |
 
-Na tela de demonstração, clique em **Entrar sem senha** no cartão desejado. Não é necessário informar e-mail ou senha.
+Na primeira visita, nenhum perfil fica selecionado: escolha uma das quatro personas na tela inicial. Depois, a troca pode ser feita no seletor do cabeçalho, sem sair do sistema e sem gerar token. A função escolhida é lembrada neste navegador.
 
-## Como são criadas
+## Identificadores e armazenamento
 
-Na primeira inicialização do servidor demonstrativo, e também ao carregar uma base JSON já existente, o servidor verifica os quatro e-mails reservados e cria somente as contas ausentes. Cada conta recebe um segredo aleatório interno, cujo hash é armazenado na base JSON. Esse segredo não é mostrado nem solicitado ao avaliador.
+- As funções (`ADMIN`, `GESTOR`, `OPERADOR`, `CONSULTA`) são os identificadores; não existem e-mails fictícios internos.
+- A persona ativa fica em `localStorage['heom.demo.role']`.
+- Dados funcionais ficam em `localStorage`; as fotografias ficam em IndexedDB.
+- Todos os registros iniciais são fictícios e marcados `SIMULADO`.
 
-A rota `POST /api/demo/quick-login` existe exclusivamente em `apps/api/src/demo-server.ts`. Ela não está registrada em `apps/api/src/server.ts`, que é o servidor institucional baseado em PostgreSQL.
+## Permissões mantidas
 
-## Habilitar ou desabilitar
+- Consulta não pode criar/editar/arquivar, solicitar/gerenciar movimentações, tratar alertas nem criar ordens.
+- Operador pode cadastrar/editar equipamento, movimentar, atuar em manutenção, fotos e alertas.
+- Gestor pode aprovar movimentações, arquivar, acessar administração/gateways e gerir operações.
+- Administrador tem o escopo administrativo e pode consultar os quatro perfis demonstrativos.
 
-Para habilitar na instância de demonstração hospedada, configure no serviço da API:
+## Limite de segurança
 
-```dotenv
-ENABLE_DEMO_PROFILES=true
-```
-
-Para desabilitar os cartões no ambiente local: 
-
-```dotenv
-ENABLE_DEMO_PROFILES=false
-```
-
-A hospedagem em `NODE_ENV=production` só habilita os cartões quando `ENABLE_DEMO_PROFILES=true` for definido explicitamente.
-
-## Segurança e uso adequado
-
-- Este acesso sem senha é exclusivamente para demonstração pública com registros fictícios.
-- Qualquer visitante pode entrar nos perfis e alterar registros simulados; não trate a base como privada.
-- Não cadastre pacientes, colaboradores, dados pessoais ou patrimônio real.
-- Não habilite `ENABLE_DEMO_PROFILES` no servidor institucional. O servidor institucional não importa as rotas rápidas.
-- `JWT_SECRET` continua obrigatório como segredo interno para assinar tokens; não é a senha do usuário e não deve ser compartilhado.
+Este mecanismo é para demonstração pública. Qualquer visitante pode trocar de perfil, alterar os próprios dados locais ou limpar o armazenamento. Não é autenticação, não protege dados e não deve ser usado para contas ou registros reais.

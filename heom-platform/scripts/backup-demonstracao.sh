@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-STAMP="$(date +%Y%m%d-%H%M%S)"
-DEST="${1:-$ROOT/backups/heom-demo-$STAMP}"
-mkdir -p "$DEST"
-[[ -f "$ROOT/apps/api/data/heom-demo.json" ]] && cp -p "$ROOT/apps/api/data/heom-demo.json" "$DEST/"
-[[ -d "$ROOT/storage" ]] && cp -a "$ROOT/storage" "$DEST/"
-echo "Backup demonstrativo criado em: $DEST"
+set -euo pipefail
+printf '%s\n' 'Este script pertence ao modo legado baseado em JSON no servidor.'
+printf '%s\n' 'A demonstração HEOM 0.4.0 armazena dados no localStorage e fotografias no IndexedDB de cada navegador.'
+printf '%s\n' 'Para exportar o inventário atual, entre no sistema e use Relatórios → Baixar inventário CSV.'
+printf '%s\n' 'Os dados de navegadores diferentes não são compartilhados nem incluídos em backup por este script.'
+exit 1

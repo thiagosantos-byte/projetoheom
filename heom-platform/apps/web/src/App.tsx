@@ -6,7 +6,7 @@ import {
   RefreshCw, Search, Settings2, ShieldCheck, Signal, Siren, Stethoscope, Truck, Users,
   Wifi, WifiOff, X, LogOut, Wrench, Boxes, CircleDot, ExternalLink, Camera, FileSpreadsheet
 } from 'lucide-react';
-import { api, apiUrl, ApiError, formatClock, formatDate, getToken, labelStatus, setToken, websocketUrl } from './lib/api';
+import { api, apiUrl, ApiError, formatClock, formatDate, getToken, labelStatus, setToken, websocketUrl, getActiveDemoUser, setActiveDemoRole } from './lib/api';
 import type { Alert, Asset, DashboardData, Department, Movement, Room, User } from './types';
 import IdentityCenter from './components/IdentityCenter';
 import MaintenanceCenter from './components/MaintenanceCenter';
@@ -15,7 +15,7 @@ import ReportsCenter from './components/ReportsCenter';
 type Page = 'overview' | 'assets' | 'identification' | 'map' | 'movements' | 'alerts' | 'maintenance' | 'reports' | 'admin';
 type Health = { status: string; database: string; mqtt: string; mode: string; persistence?: string; persistenceStatus?: string; tracking?: string; message?: string };
 type Gateway = { id: string; code: string; name: string; status: string; lastSeenAt?: string; roomName?: string; dataOrigin: string };
-type DemoProfile = { email: string; name: string; role: User['role']; description: string; title: string };
+type DemoProfile = { name: string; role: User['role']; description: string; title: string };
 
 const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Visão geral', icon: LayoutDashboard },
@@ -28,13 +28,6 @@ const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'reports', label: 'Relatórios', icon: FileSpreadsheet },
   { id: 'admin', label: 'Administração', icon: Settings2 }
 ];
-
-const DEMO_PROFILE_EMAILS: Record<User['role'], string> = {
-  ADMIN: 'admin.teste@heom.local',
-  GESTOR: 'gestor.teste@heom.local',
-  OPERADOR: 'operador.teste@heom.local',
-  CONSULTA: 'consulta.teste@heom.local'
-};
 
 function useToast() {
   const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
@@ -68,103 +61,14 @@ function Modal({ title, description, onClose, children, wide = false }: { title:
 }
 
 function LoginScreen({ onLogin }: { onLogin: (user: User, token: string) => void }) {
-  const isDemoMode = import.meta.env.VITE_HEOM_MODE === 'demo';
-  const [email, setEmail] = useState('admin@heom.local');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [demoProfiles, setDemoProfiles] = useState<DemoProfile[]>([]);
-  const [demoProfilesLoading, setDemoProfilesLoading] = useState(true);
-  const [demoProfilesError, setDemoProfilesError] = useState('');
-
-  useEffect(() => {
-    let mounted = true;
-    api<{ data: DemoProfile[] }>('/demo/profiles')
-      .then((result) => {
-        if (!mounted) return;
-        setDemoProfiles(result.data || []);
-        setDemoProfilesError('');
-      })
-      .catch((err) => {
-        if (!mounted) return;
-        setDemoProfiles([]);
-        setDemoProfilesError(err instanceof Error ? err.message : 'Não foi possível carregar os perfis de teste.');
-      })
-      .finally(() => { if (mounted) setDemoProfilesLoading(false); });
-    return () => { mounted = false; };
-  }, []);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<{ token: string; user: User }>('/auth/login', {
-        method: 'POST', body: JSON.stringify({ email, password })
-      });
-      onLogin(result.user, result.token);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível entrar.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function enterDemoProfile(profile: DemoProfile) {
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<{ token: string; user: User }>('/demo/quick-login', {
-        method: 'POST', body: JSON.stringify({ email: profile.email })
-      });
-      onLogin(result.user, result.token);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível abrir o perfil de demonstração.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const showDemoProfiles = isDemoMode || demoProfiles.length > 0;
-
-  return <main className="login-layout">
-    <div className="login-brand-panel">
-      <div className="brand-lockup"><div className="brand-mark"><Stethoscope size={25} /></div><div><strong>HEOM</strong><span>INTELIGÊNCIA PATRIMONIAL</span></div></div>
-      <div className="login-story"><div className="eyebrow eyebrow-light">GESTÃO HOSPITALAR INTEGRADA</div><h1>O cuidado também depende de saber onde cada recurso está.</h1><p>Uma plataforma local para organizar o inventário, acompanhar movimentações e dar visibilidade operacional aos equipamentos hospitalares.</p></div>
-      <div className="login-foot"><span>Hospital Especializado Octávio Mangabeira</span><span>Salvador · Bahia</span></div>
-    </div>
-    <div className="login-form-panel"><form className="login-form" onSubmit={submit}>
-      <div className="login-kicker"><ShieldCheck size={17} /> {showDemoProfiles ? 'AMBIENTE DE DEMONSTRAÇÃO' : 'ACESSO INSTITUCIONAL'}</div>
-      <h2>{isDemoMode ? 'Entrar na demonstração' : 'Entrar no sistema'}</h2>
-      <p className="muted">{isDemoMode ? 'Escolha um perfil de avaliação para acessar o sistema. Não é necessário informar e-mail ou senha.' : 'Utilize suas credenciais de acesso para entrar na plataforma.'}</p>
-
-      {!isDemoMode && <>
-        <label>E-mail institucional<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" placeholder="nome@instituicao.gov.br" /></label>
-        <label>Senha<input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" placeholder="Digite sua senha" /></label>
-        {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
-        <button className="button button-primary button-full" disabled={busy}>{busy ? 'Validando acesso…' : 'Acessar plataforma'}</button>
-      </>}
-
-      {showDemoProfiles && <section className="demo-access" aria-label="Perfis de demonstração">
-        <div className="demo-access-heading"><div><span className="eyebrow">ACESSO SEM SENHA</span><h3>Escolha um perfil para testar</h3></div><span className="demo-access-badge">SIMULADO</span></div>
-        <p className="demo-access-copy">Cada opção abre o sistema com permissões diferentes. Os dados são fictícios e nenhuma senha é solicitada.</p>
-        {demoProfilesLoading ? <p className="muted">Carregando perfis de teste…</p> : demoProfiles.length > 0 ? <div className="demo-profile-grid">
-          {demoProfiles.map((profile) => <button key={profile.email} type="button" className="demo-profile-card" disabled={busy} onClick={() => void enterDemoProfile(profile)}>
-            <span className={`demo-profile-role role-${profile.role.toLowerCase()}`}>{labelStatus(profile.role)}</span>
-            <strong>{profile.name}</strong>
-            <span className="demo-profile-email">{profile.email}</span>
-            <small>{profile.description}</small>
-            <span className="demo-profile-action">{busy ? 'Abrindo perfil…' : 'Entrar sem senha'} <span aria-hidden="true">↗</span></span>
-          </button>)}
-        </div> : <div className="form-error"><AlertTriangle size={16} />{demoProfilesError || 'Os perfis de teste não foram encontrados. Verifique se a API está publicada e se ENABLE_DEMO_PROFILES=true.'}</div>}
-        {error && <div className="form-error"><AlertTriangle size={16} />{error}</div>}
-        <p className="demo-access-warning">Ambiente público de avaliação. Todos os cadastros são simulados e podem ser alterados por outras pessoas que acessarem esta demonstração. Não insira dados reais.</p>
-      </section>}
-      <div className="login-security"><LockIcon /> <span>{isDemoMode ? 'Acesso temporário de avaliação, sem senha pessoal.' : 'Autenticação protegida pela API configurada para este ambiente.'}</span></div>
-    </form></div>
-  </main>;
+  const profiles: DemoProfile[] = [
+    { name: 'Administrador de demonstração', role: 'ADMIN', title: 'Administração completa', description: 'Visão administrativa e configurações demonstrativas.' },
+    { name: 'Gestor patrimonial', role: 'GESTOR', title: 'Gestão e aprovações', description: 'Indicadores, movimentações e manutenção.' },
+    { name: 'Operador de inventário', role: 'OPERADOR', title: 'Rotina operacional', description: 'Cadastro, atualização e atividades operacionais.' },
+    { name: 'Perfil de consulta', role: 'CONSULTA', title: 'Somente leitura', description: 'Consulta de informações sem alterações.' }
+  ];
+  return <main className="login-layout"><div className="login-brand-panel"><div className="brand-lockup"><div className="brand-mark"><Stethoscope size={25} /></div><div><strong>HEOM</strong><span>INTELIGÊNCIA PATRIMONIAL</span></div></div><div className="login-story"><div className="eyebrow eyebrow-light">GESTÃO HOSPITALAR INTEGRADA</div><h1>O cuidado também depende de saber onde cada recurso está.</h1><p>Ambiente público de demonstração com dados totalmente fictícios.</p></div><div className="login-foot"><span>HEOM · Ambiente demonstrativo</span><span>Salvador · Bahia</span></div></div><div className="login-form-panel"><section className="login-form"><div className="login-kicker"><ShieldCheck size={17} /> AMBIENTE DE DEMONSTRAÇÃO</div><h2>Escolha um perfil de teste</h2><p className="muted">Não é necessário informar e-mail, senha ou cadastrar uma conta.</p><section className="demo-access">{profiles.map((profile) => <button key={profile.role} type="button" className="demo-profile-card" onClick={() => { setActiveDemoRole(profile.role); onLogin(getActiveDemoUser() as User, ''); }}><strong>{profile.name}</strong><span>{profile.title}</span><small>{profile.description}</small></button>)}</section><p className="demo-access-warning">Personagens demonstrativos. As permissões servem para avaliar a interface e não representam autenticação ou proteção de produção.</p></section></div></main>;
 }
-function LockIcon() { return <ShieldCheck size={16} />; }
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -183,7 +87,7 @@ function App() {
   const [assetQuery, setAssetQuery] = useState('');
   const [assetStatus, setAssetStatus] = useState('');
   const [alertStatus, setAlertStatus] = useState('');
-  const [modal, setModal] = useState<'asset' | 'movement' | 'user' | null>(null);
+  const [modal, setModal] = useState<'asset' | 'movement' | null>(null);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [busy, setBusy] = useState(false);
   const [clock, setClock] = useState(new Date());
@@ -201,11 +105,9 @@ function App() {
     const start = async () => {
       try {
         if (import.meta.env.VITE_HEOM_MODE === 'demo') {
-          // Entrada direta: token de demonstração gerado internamente pela API.
-          const result = await api<{ token: string; user: User }>('/demo/quick-login', {
-            method: 'POST', body: JSON.stringify({ email: DEMO_PROFILE_EMAILS.ADMIN })
-          });
-          if (!cancelled) { setToken(result.token); setUser(result.user); }
+          // O perfil é uma persona local; não há login, e-mail, senha ou token.
+          const demoUser = getActiveDemoUser();
+          if (!cancelled) { setToken(null); setUser(demoUser as User | null); }
           return;
         }
         const token = getToken();
@@ -228,6 +130,10 @@ function App() {
   }, []);
 
   const loadHealth = useCallback(async () => {
+    if (import.meta.env.VITE_HEOM_MODE === 'demo') {
+      setHealth({ status: 'operacional', database: 'indexeddb', mqtt: 'nao_utilizado', tracking: 'simulador_local', mode: 'DEMONSTRACAO_NAVEGADOR', persistence: 'IndexedDB e localStorage do navegador', persistenceStatus: 'operacional', message: 'Os dados e fotografias desta demonstração ficam no navegador atual.' });
+      return;
+    }
     try { const result = await fetch(apiUrl('/health')); setHealth(await result.json()); }
     catch { setHealth(null); }
   }, []);
@@ -299,13 +205,12 @@ function App() {
   async function switchDemoProfile(role: User['role']) {
     setProfileSwitchBusy(true);
     try {
-      const result = await api<{ token: string; user: User }>('/demo/quick-login', {
-        method: 'POST', body: JSON.stringify({ email: DEMO_PROFILE_EMAILS[role] })
-      });
-      setToken(result.token);
-      setUser(result.user);
+      setActiveDemoRole(role);
+      setToken(null);
+      setUser(getActiveDemoUser() as User);
       setPage('overview');
       setNotificationOpen(false);
+      setNotifications([]);
       show(`Perfil alterado para ${labelStatus(role)}.`, 'info');
     } catch (err) {
       show(err instanceof Error ? err.message : 'Não foi possível trocar o perfil.', 'error');
@@ -384,16 +289,10 @@ function App() {
       show(err instanceof Error ? err.message : 'Não foi possível atualizar a notificação.', 'error');
     }
   }
-  async function createUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); const form = new FormData(event.currentTarget);
-    const body = { name: String(form.get('name')), email: String(form.get('email')), password: String(form.get('password')), role: String(form.get('role')) };
-    try { await api('/admin/users', { method: 'POST', body: JSON.stringify(body) }); show('Usuário cadastrado.'); setModal(null); }
-    catch (err) { show(err instanceof Error ? err.message : 'Não foi possível cadastrar usuário.', 'error'); }
-    finally { setBusy(false); }
-  }
+
 
   if (initializing) return <div className="app-loading"><div className="brand-mark"><Stethoscope size={24} /></div><span>Preparando ambiente local…</span></div>;
-  if (!user && import.meta.env.VITE_HEOM_MODE === 'demo') return <main className="demo-start-error">
+  if (!user && import.meta.env.VITE_HEOM_MODE === 'demo' && demoInitError) return <main className="demo-start-error">
     <div className="brand-mark"><Stethoscope size={24} /></div>
     <span className="eyebrow">HEOM · AMBIENTE DE DEMONSTRAÇÃO</span>
     <h1>Não foi possível abrir o ambiente</h1>
@@ -412,15 +311,15 @@ function App() {
       <div className="topbar-module"><span className="topbar-divider" /><span className="module-label">{activeTitle}</span></div>
       <div className="topbar-right">
         <div className="connection-indicators">
-          <span className={`connection-chip ${health?.status === 'operacional' ? 'connected' : 'disconnected'}`}><span className="pulse-dot" />{health?.status === 'operacional' ? 'Aplicação local ativa' : health?.status === 'degradado' ? 'Persistência degradada' : 'Servidor indisponível'}</span>
-          <span className="connection-chip secondary"><Wifi size={13} /> Internet não necessária</span>
+          <span className={`connection-chip ${health?.status === 'operacional' ? 'connected' : 'disconnected'}`}><span className="pulse-dot" />{health?.status === 'operacional' ? (health?.mode === 'DEMONSTRACAO_NAVEGADOR' ? 'Demonstração ativa' : 'Aplicação local ativa') : health?.status === 'degradado' ? 'Persistência degradada' : 'Servidor indisponível'}</span>
+          <span className="connection-chip secondary"><Wifi size={13} /> Dados locais no navegador</span>
         </div>
         <div className="topbar-date"><Clock3 size={14} /><span>{formatClock(clock)}</span></div>
         <div className="notification-wrap">
           <button className="icon-button notification-button" aria-label="Notificações" onClick={() => { setNotificationOpen((value) => !value); void loadNotifications(); }}><Bell size={18} />{unreadCount > 0 && <i>{unreadCount}</i>}</button>
           {notificationOpen && <div className="notification-popover"><div className="popover-heading"><strong>Notificações</strong><button className="text-button" onClick={() => void loadNotifications()}>Atualizar</button></div>{notifications.length ? notifications.map((item) => <div className={`notification-item ${item.readAt ? 'read' : 'unread'}`} key={item.id}><span className="notification-dot" /><div><strong>{item.title}</strong><p>{item.message}</p><small>{formatDate(item.createdAt)} · {item.readAt ? 'Lida' : 'Não lida'}</small>{!item.readAt && <button className="text-button" onClick={() => void markNotificationRead(item.id)}>Marcar como lida</button>}</div></div>) : <div className="empty-inline">Nenhuma notificação registrada.</div>}</div>}
         </div>
-        <div className="user-menu"><div className="avatar">{user.name.split(' ').slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</div><div className="user-copy"><strong>{import.meta.env.VITE_HEOM_MODE === 'demo' ? 'Demonstração aberta' : user.name}</strong><span>{import.meta.env.VITE_HEOM_MODE === 'demo' ? 'Perfil ativo · ' + labelStatus(user.role) : labelStatus(user.role)}</span></div>{import.meta.env.VITE_HEOM_MODE === 'demo' ? <select className="demo-profile-select" aria-label="Trocar perfil de demonstração" value={user.role} disabled={profileSwitchBusy} onChange={(event) => void switchDemoProfile(event.target.value as User['role'])}><option value="ADMIN">Administrador</option><option value="GESTOR">Gestor</option><option value="OPERADOR">Operador</option><option value="CONSULTA">Consulta</option></select> : <button className="icon-button logout" aria-label="Sair" onClick={logout}><LogOut size={17} /></button>}</div>
+        <div className="user-menu"><div className="avatar">{user.name.split(' ').slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</div><div className="user-copy"><strong>{user.name}</strong><span>{import.meta.env.VITE_HEOM_MODE === 'demo' ? 'Perfil de teste · ' + labelStatus(user.role) : labelStatus(user.role)}</span></div>{import.meta.env.VITE_HEOM_MODE === 'demo' ? <select className="demo-profile-select" aria-label="Trocar perfil de demonstração" value={user.role} disabled={profileSwitchBusy} onChange={(event) => void switchDemoProfile(event.target.value as User['role'])}><option value="ADMIN">Administrador</option><option value="GESTOR">Gestor</option><option value="OPERADOR">Operador</option><option value="CONSULTA">Consulta</option></select> : <button className="icon-button logout" aria-label="Sair" onClick={logout}><LogOut size={17} /></button>}</div>
       </div>
     </header>
 
@@ -429,7 +328,7 @@ function App() {
       <div className="nav-spacer" /><span className="timezone-label">BAHIA · UTC−03</span>
     </nav>
 
-    {dashboard?.demoMode && <div className="demo-banner"><span><CircleDot size={14} /> AMBIENTE DE DEMONSTRAÇÃO</span><p>Registros identificados como SIMULADO são fictícios e não representam o inventário oficial do HEOM.</p></div>}
+    {import.meta.env.VITE_HEOM_MODE === 'demo' && <div className="demo-banner"><span><CircleDot size={14} /> AMBIENTE DE DEMONSTRAÇÃO — PERFIL DE TESTE</span><p>Dados fictícios armazenados neste navegador. Os perfis permitem avaliar permissões de interface e não são autenticação de produção.</p></div>}
 
     <main className="main-content">
       {page === 'overview' && <Overview data={dashboard} loading={!dashboard} onNavigate={setPage} onAssetFilter={(filter) => { setAssetQuery(''); setAssetStatus(filter); setPage('assets'); }} onRefresh={refreshAll} />}
@@ -440,14 +339,13 @@ function App() {
       {page === 'alerts' && <Alerts alerts={alerts} status={alertStatus} setStatus={setAlertStatus} canManage={user.role !== 'CONSULTA'} onUpdate={updateAlert} />}
       {page === 'maintenance' && <MaintenanceCenter assets={assets} canManage={user.role !== 'CONSULTA'} onToast={show} />}
       {page === 'reports' && <ReportsCenter onToast={show} onRefresh={() => void loadPage()} canImport={user.role !== 'CONSULTA'} />}
-      {page === 'admin' && <Administration gateways={gateways} assets={assets} health={health} user={user} onSimulate={simulateMovement} onAddUser={() => setModal('user')} onRefresh={() => void loadPage()} onToast={show} />}
+      {page === 'admin' && <Administration gateways={gateways} assets={assets} health={health} user={user} onSimulate={simulateMovement} onRefresh={() => void loadPage()} onToast={show} />}
     </main>
 
-    <footer className="app-footer"><span>HEOM · Plataforma de Inteligência Patrimonial</span><span><ShieldCheck size={13} /> Operação local · America/Bahia</span><span>Versão 0.3.1 — Interface aprimorada · Operação nativa sem Docker</span></footer>
+    <footer className="app-footer"><span>HEOM · Plataforma de Inteligência Patrimonial</span><span><ShieldCheck size={13} /> Demonstração local-first · America/Bahia</span><span>Versão 0.4.0 — Demonstração integrada sem contas reais</span></footer>
 
-    {modal === 'asset' && <Modal title={editingAsset ? 'Editar equipamento' : 'Cadastrar equipamento'} description={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Os dados serão persistidos no arquivo JSON local desta demonstração.' : health ? 'Os dados serão persistidos no PostgreSQL da infraestrutura local.' : 'Identificando o mecanismo de persistência do ambiente…'} onClose={() => { setModal(null); setEditingAsset(null); }} wide><AssetForm asset={editingAsset} departments={departments} rooms={rooms} busy={busy} onSubmit={saveAsset} onCancel={() => { setModal(null); setEditingAsset(null); }} /></Modal>}
+    {modal === 'asset' && <Modal title={editingAsset ? 'Editar equipamento' : 'Cadastrar equipamento'} description={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Os dados serão salvos localmente neste navegador (localStorage/IndexedDB).' : health ? 'Os dados serão persistidos no PostgreSQL da infraestrutura local.' : 'Identificando o mecanismo de persistência do ambiente…'} onClose={() => { setModal(null); setEditingAsset(null); }} wide><AssetForm asset={editingAsset} departments={departments} rooms={rooms} busy={busy} onSubmit={saveAsset} onCancel={() => { setModal(null); setEditingAsset(null); }} /></Modal>}
     {modal === 'movement' && <Modal title="Solicitar movimentação" description="A movimentação ficará pendente até a aprovação de um gestor autorizado." onClose={() => setModal(null)}><MovementForm assets={assets} departments={departments} rooms={rooms} busy={busy} onSubmit={saveMovement} /></Modal>}
-    {modal === 'user' && <Modal title="Cadastrar usuário" description="Crie uma conta local e atribua o perfil de acesso adequado." onClose={() => setModal(null)}><UserForm busy={busy} onSubmit={createUser} /></Modal>}
     {toast && <Toast toast={toast} />}
   </div>;
 }
@@ -497,7 +395,7 @@ function Overview({ data, loading, onNavigate, onAssetFilter, onRefresh }: { dat
           </div>
           <div className="hero-ring-caption"><span className="hero-ring-label">DISPONIBILIDADE REGISTRADA</span><strong>{loading ? '—' : `${metrics?.operating ?? 0} de ${total}`}</strong><small>equipamentos cadastrados</small></div>
         </div>
-        <div className="hero-side-footer"><span><span className="hero-live-dot" /> Painel conectado à API local</span><span>HEOM <b>·</b> BA</span></div>
+        <div className="hero-side-footer"><span><span className="hero-live-dot" /> Painel demonstrativo no navegador</span><span>HEOM <b>·</b> BA</span></div>
       </div>
     </section>
 
@@ -621,32 +519,21 @@ function Alerts({ alerts, status, setStatus, canManage, onUpdate }: { alerts: Al
   </>;
 }
 
-function Administration({ gateways, assets, health, user, onSimulate, onAddUser, onRefresh, onToast }: { gateways: Gateway[]; assets: Asset[]; health: Health | null; user: User; onSimulate: () => void; onAddUser: () => void; onRefresh: () => void; onToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
+function Administration({ gateways, assets, health, user, onSimulate, onRefresh, onToast }: { gateways: Gateway[]; assets: Asset[]; health: Health | null; user: User; onSimulate: () => void; onRefresh: () => void; onToast: (message: string, type?: 'success' | 'error' | 'info') => void }) {
   const canAdmin = user.role === 'ADMIN';
-  const [users, setUsers] = useState<Array<{ id: string; name: string; email: string; role: string; active: boolean; isDemoProfile?: boolean }>>([]);
+  const [users, setUsers] = useState<Array<{ id: string; name: string; role: string; active: boolean; isDemoProfile?: boolean }>>([]);
   useEffect(() => { if (canAdmin) api<{ data: typeof users }>('/admin/users').then((result) => setUsers(result.data)).catch((err) => onToast(err.message, 'error')); }, [canAdmin, onToast]);
   return <>
-    <SectionHeading eyebrow="CONFIGURAÇÃO E SERVIÇOS LOCAIS" title="Administração" description={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Modo de avaliação sem Docker, com arquivo local persistente e simulador interno de rastreamento.' : 'Saúde da infraestrutura, gateways cadastrados e controle do ambiente de demonstração.'} action={<button className="button button-outline" onClick={onRefresh}><RefreshCw size={15} /> Atualizar</button>} />
-    <div className="infra-grid"><InfraCard title="API local" status={health?.status === 'operacional' ? 'Conectada' : health?.status === 'degradado' ? 'Com degradação' : 'Indisponível'} tone={health?.status === 'operacional' ? 'green' : 'red'} icon={<Activity size={19} />} detail="Serviços de aplicação e regras de negócio" /><InfraCard title={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Persistência demonstrativa' : 'PostgreSQL'} status={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? (health?.persistenceStatus === 'falha' ? 'Falha na gravação' : 'Arquivo JSON ativo') : health?.database === 'conectado' ? 'Conectado' : 'Indisponível'} tone={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? (health?.persistenceStatus === 'falha' ? 'red' : 'blue') : health?.database === 'conectado' ? 'green' : 'red'} icon={<Database size={19} />} detail={health?.persistence || 'Persistência relacional local'} /><InfraCard title={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Rastreamento' : 'Broker MQTT'} status={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Simulador interno' : health?.mqtt === 'conectado' ? 'Conectado' : 'Aguardando conexão'} tone={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'blue' : health?.mqtt === 'conectado' ? 'green' : 'amber'} icon={<RadioTower size={19} />} detail={health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Evento fictício processado localmente; sem broker ou hardware' : 'Recepção local de eventos de rastreamento'} /><InfraCard title="Conectividade externa" status="Não necessária" tone="blue" icon={<HardDrive size={19} />} detail="O modo de demonstração não consulta serviços externos" /></div>
-    <section className="panel gateway-panel"><div className="panel-heading"><div><span className="eyebrow">{health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'TELEMETRIA · SIMULADOR LOCAL' : 'TELEMETRIA · MQTT'}</span><h2>Gateways de rastreamento</h2><p>Dispositivos cadastrados e seu último estado conhecido.</p></div></div>{gateways.length ? <div className="table-wrap"><table><thead><tr><th>Identificação</th><th>Ambiente vinculado</th><th>Comunicação</th><th>Último contato</th><th>Origem</th></tr></thead><tbody>{gateways.map((gateway) => <tr key={gateway.id}><td><strong>{gateway.name}</strong><small>{gateway.code}</small></td><td>{gateway.roomName || 'Ambiente não vinculado'}</td><td><StatusPill value={gateway.status} /></td><td>{formatDate(gateway.lastSeenAt)}</td><td>{gateway.dataOrigin === 'SIMULADO' ? <span className="demo-tag">SIMULADO</span> : 'Institucional'}</td></tr>)}</tbody></table></div> : <EmptyState icon={<RadioTower size={23} />} title="Nenhum gateway cadastrado" description="O cadastro e a instalação de gateways físicos serão feitos após validação da infraestrutura de rede e do projeto de cobertura." />}</section>
-    <section className="panel simulator-panel"><div className="simulator-intro"><div className="simulator-icon"><Activity size={20} /></div><div><span className="eyebrow">AMBIENTE CONTROLADO</span><h2>Simulador de rastreamento</h2><p>{health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Processa uma detecção fictícia no simulador interno e atualiza a persistência local. Não exige MQTT, Docker ou dispositivos físicos.' : 'Envia uma detecção de demonstração ao broker MQTT local. O backend recebe e processa o evento pela mesma rotina de entrada dos dispositivos.'}</p></div></div><div className="simulator-controls"><div className="simulator-sample"><span>Etiqueta selecionada</span><strong>{assets.find((asset) => asset.dataOrigin === 'SIMULADO' && asset.trackingTagId)?.trackingTagId || assets.find((asset) => asset.trackingTagId)?.trackingTagId || 'Sem etiqueta disponível'}</strong><small>{gateways.find((gateway) => gateway.dataOrigin === 'SIMULADO')?.code || gateways[0]?.code || 'Nenhum gateway cadastrado'} · RSSI −61 dBm</small></div><button className="button button-primary" onClick={onSimulate} disabled={!assets.some((asset) => asset.trackingTagId) || gateways.length === 0}><RadioTower size={16} /> Emitir detecção simulada</button></div><div className="form-hint"><CircleHelp size={15} /> {health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' ? 'Modo sem Docker: evento processado pelo simulador local. Não representa rastreamento físico.' : 'Disponível somente com DEMO_MODE=true e broker MQTT local conectado. Não representa rastreamento físico.'}</div></section>
-    {canAdmin && <section className="panel users-panel"><div className="panel-heading"><div><span className="eyebrow">CONTROLE DE ACESSO</span><h2>Usuários locais</h2><p>Contas autenticadas pela própria aplicação.</p></div><button className="button button-outline" onClick={onAddUser}><Plus size={15} /> Novo usuário</button></div>{users.length ? <div className="table-wrap"><table><thead><tr><th>Usuário</th><th>E-mail</th><th>Perfil</th><th>Situação</th></tr></thead><tbody>{users.map((item) => <tr key={item.id}><td><strong>{item.name}</strong></td><td>{item.email}</td><td>{labelStatus(item.role)} {item.isDemoProfile && <span className="demo-tag">Teste</span>}</td><td><StatusPill value={item.active ? 'EM_OPERACAO' : 'INDISPONIVEL'} label={item.active ? 'Ativo' : 'Inativo'} /></td></tr>)}</tbody></table></div> : <EmptyState icon={<Users size={22} />} title="Nenhum usuário retornado" description="Cadastre usuários locais com o menor nível de permissão necessário." />}</section>}
+    <SectionHeading eyebrow="CONFIGURAÇÃO E SERVIÇOS LOCAIS" title="Administração" description={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Modo demonstrativo local-first: dados no navegador atual e rastreamento exclusivamente simulado.' : 'Saúde da infraestrutura, gateways cadastrados e controle do ambiente de demonstração.'} action={<button className="button button-outline" onClick={onRefresh}><RefreshCw size={15} /> Atualizar</button>} />
+    <div className="infra-grid"><InfraCard title="Aplicação demonstrativa" status={health?.status === 'operacional' ? 'Ativa' : health?.status === 'degradado' ? 'Com degradação' : 'Indisponível'} tone={health?.status === 'operacional' ? 'green' : 'red'} icon={<Activity size={19} />} detail="Operações executadas no navegador atual; sem sessão ou servidor de dados compartilhado" /><InfraCard title={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Persistência demonstrativa' : 'PostgreSQL'} status={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? (health?.persistenceStatus === 'falha' ? 'Falha na gravação' : 'Armazenamento do navegador ativo') : health?.database === 'conectado' ? 'Conectado' : 'Indisponível'} tone={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? (health?.persistenceStatus === 'falha' ? 'red' : 'blue') : health?.database === 'conectado' ? 'green' : 'red'} icon={<Database size={19} />} detail={health?.persistence || 'Persistência relacional local'} /><InfraCard title={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Rastreamento' : 'Broker MQTT'} status={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Simulador interno' : health?.mqtt === 'conectado' ? 'Conectado' : 'Aguardando conexão'} tone={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'blue' : health?.mqtt === 'conectado' ? 'green' : 'amber'} icon={<RadioTower size={19} />} detail={(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Evento fictício no navegador; sem broker ou hardware físico' : 'Recepção local de eventos de rastreamento'} /><InfraCard title="Conectividade externa" status="Não necessária" tone="blue" icon={<HardDrive size={19} />} detail="O modo de demonstração não consulta serviços externos" /></div>
+    <section className="panel gateway-panel"><div className="panel-heading"><div><span className="eyebrow">{(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'TELEMETRIA · SIMULADOR LOCAL' : 'TELEMETRIA · MQTT'}</span><h2>Gateways de rastreamento</h2><p>Dispositivos cadastrados e seu último estado conhecido.</p></div></div>{gateways.length ? <div className="table-wrap"><table><thead><tr><th>Identificação</th><th>Ambiente vinculado</th><th>Comunicação</th><th>Último contato</th><th>Origem</th></tr></thead><tbody>{gateways.map((gateway) => <tr key={gateway.id}><td><strong>{gateway.name}</strong><small>{gateway.code}</small></td><td>{gateway.roomName || 'Ambiente não vinculado'}</td><td><StatusPill value={gateway.status} /></td><td>{formatDate(gateway.lastSeenAt)}</td><td>{gateway.dataOrigin === 'SIMULADO' ? <span className="demo-tag">SIMULADO</span> : 'Institucional'}</td></tr>)}</tbody></table></div> : <EmptyState icon={<RadioTower size={23} />} title="Nenhum gateway cadastrado" description="O cadastro e a instalação de gateways físicos serão feitos após validação da infraestrutura de rede e do projeto de cobertura." />}</section>
+    <section className="panel simulator-panel"><div className="simulator-intro"><div className="simulator-icon"><Activity size={20} /></div><div><span className="eyebrow">AMBIENTE CONTROLADO</span><h2>Simulador de rastreamento</h2><p>{(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Processa uma detecção fictícia no simulador interno e atualiza a persistência local. Não exige MQTT, Docker ou dispositivos físicos.' : 'Envia uma detecção de demonstração ao broker MQTT local. O backend recebe e processa o evento pela mesma rotina de entrada dos dispositivos.'}</p></div></div><div className="simulator-controls"><div className="simulator-sample"><span>Etiqueta selecionada</span><strong>{assets.find((asset) => asset.dataOrigin === 'SIMULADO' && asset.trackingTagId)?.trackingTagId || assets.find((asset) => asset.trackingTagId)?.trackingTagId || 'Sem etiqueta disponível'}</strong><small>{gateways.find((gateway) => gateway.dataOrigin === 'SIMULADO')?.code || gateways[0]?.code || 'Nenhum gateway cadastrado'} · RSSI −61 dBm</small></div><button className="button button-primary" onClick={onSimulate} disabled={!assets.some((asset) => asset.trackingTagId) || gateways.length === 0}><RadioTower size={16} /> Emitir detecção simulada</button></div><div className="form-hint"><CircleHelp size={15} /> {(health?.mode === 'DEMONSTRACAO_LOCAL_SEM_DOCKER' || health?.mode === 'DEMONSTRACAO_NAVEGADOR') ? 'Demonstração: evento guardado neste navegador. Não representa rastreamento físico.' : 'Disponível somente com DEMO_MODE=true e broker MQTT local conectado. Não representa rastreamento físico.'}</div></section>
+    {canAdmin && <section className="panel users-panel"><div className="panel-heading"><div><span className="eyebrow">CONTROLE DE ACESSO DEMONSTRATIVO</span><h2>Perfis e matriz de permissões</h2><p>Personagens fixos de avaliação. Não há contas, e-mails, senhas ou usuários reais; altere o perfil pelo seletor no cabeçalho.</p></div></div>{users.length ? <div className="table-wrap"><table><thead><tr><th>Perfil demonstrativo</th><th>Inventário</th><th>Movimentações</th><th>Administração</th><th>Situação</th></tr></thead><tbody>{users.map((item) => { const permissions: Record<string, [string, string, string]> = { ADMIN: ['Cadastrar, editar e arquivar', 'Solicitar, aprovar e concluir', 'Acesso completo e perfis'], GESTOR: ['Cadastrar, editar e arquivar', 'Solicitar, aprovar e concluir', 'Gateways e operação'], OPERADOR: ['Cadastrar e editar', 'Solicitar movimentações', 'Sem acesso administrativo'], CONSULTA: ['Somente leitura', 'Somente leitura', 'Sem acesso administrativo'] }; const access = permissions[item.role] || ['Não definido', 'Não definido', 'Não definido']; return <tr key={item.id}><td><strong>{item.name}</strong><small>{labelStatus(item.role)}</small></td><td>{access[0]}</td><td>{access[1]}</td><td>{access[2]}</td><td><StatusPill value={item.active ? 'EM_OPERACAO' : 'INDISPONIVEL'} label={item.active ? 'Disponível' : 'Indisponível'} /></td></tr>; })}</tbody></table></div> : <EmptyState icon={<Users size={22} />} title="Perfis indisponíveis" description="Atualize a demonstração para carregar as personas de teste." />}</section>}
     <div className="security-note"><ShieldCheck size={17} /><p><strong>Nota de implantação:</strong> esta base inicial ainda exige revisão de segurança, definição de certificados/TLS internos, política de senhas, firewall, cópias de segurança e homologação institucional antes de uso real.</p></div>
   </>;
 }
 function InfraCard({ title, status, tone, icon, detail }: { title: string; status: string; tone: string; icon: ReactNode; detail: string }) {
   return <div className="infra-card"><span className={`infra-icon ${tone}`}>{icon}</span><div><small>{title}</small><strong>{status}</strong><p>{detail}</p></div></div>;
-}
-
-function UserForm({ busy, onSubmit }: { busy: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <form className="form-grid one-column" onSubmit={onSubmit}>
-    <label>Nome completo *<input name="name" minLength={3} maxLength={140} required placeholder="Nome do colaborador" /></label>
-    <label>E-mail *<input name="email" type="email" required placeholder="usuario@instituicao.gov.br" /></label>
-    <label>Senha inicial *<input name="password" type="password" required minLength={12} placeholder="Mínimo de 12 caracteres" /></label>
-    <label>Perfil de acesso<select name="role"><option value="CONSULTA">Consulta — somente leitura</option><option value="OPERADOR">Operador — cadastros e ocorrências</option><option value="GESTOR">Gestor — aprovações e gestão</option><option value="ADMIN">Administrador — controle total</option></select></label>
-    <div className="form-hint"><ShieldCheck size={15} /> Conceda apenas as permissões necessárias à atividade do usuário.</div>
-    <div className="form-actions"><button className="button button-primary" disabled={busy}>{busy ? 'Cadastrando…' : 'Criar usuário'}</button></div>
-  </form>;
 }
 
 export default App;

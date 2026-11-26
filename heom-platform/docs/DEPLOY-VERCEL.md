@@ -1,84 +1,57 @@
-# Publicar HEOM na Vercel (frontend + API no mesmo projeto)
+# Publicação do HEOM na Vercel — projeto único
 
-Este modo é exclusivamente demonstrativo. A interface Vite e a API Express são publicadas no mesmo projeto Vercel, sob o mesmo domínio. Não usa Render, Docker nem um servidor Express permanente.
+A implantação é exclusivamente demonstrativa. A Vercel publica o build React/Vite e a Function `/api/*` no mesmo projeto e domínio. Não há serviço Render, Railway, banco de dados, Docker, credenciais ou servidor Node permanente.
 
-## 1. Configuração do projeto Vercel
+## 1. Conectar GitHub
 
-No projeto `projetoheom`, em **Settings → Build and Deployment**, configure:
+1. Entre na Vercel e escolha **Add New → Project**.
+2. Importe `thiagosantos-byte/projetoheom` e selecione a branch `main`.
+3. Em **Root Directory**, escolha `heom-platform` (não a raiz externa do repositório).
+4. Configure os campos abaixo ou confirme os valores já detectados do `vercel.json`.
 
-| Campo | Valor |
+| Configuração | Valor |
 |---|---|
-| Root Directory | `heom-platform` |
-| Framework Preset | `Vite` |
-| Node.js Version | `22.x` |
+| Framework Preset | Vite |
+| Node.js Version | 22.x |
 | Install Command | `npm install` |
-| Build Command | `npm run build -w @heom/api && npm run build -w @heom/web` |
+| Build Command | `npm run build` |
 | Output Directory | `apps/web/dist` |
 
-O arquivo `vercel.json` já declara os comandos de instalação/build e a função catch-all em `api/[...path].ts`.
+5. Não cadastre variáveis de ambiente. A distribuição de demonstração não exige `.env`, `JWT_SECRET`, `DATABASE_URL`, MQTT ou endereço de backend.
+6. Clique em **Deploy**.
 
-## 2. Variáveis de ambiente
+## 2. Rotas e domínio
 
-Cadastre no ambiente **Production** (e também Preview caso queira testar previews):
+- A interface estática é publicada em `apps/web/dist`.
+- `api/[...path].ts` atende `/api/*` como Vercel Function.
+- A interface usa o adaptador local-first em `apps/web/src/lib/local-demo-api.ts`; não chama um segundo domínio nem depende de API hospedada à parte.
+- `/api/health` é disponibilizado no mesmo domínio para diagnóstico.
 
-| Chave | Valor |
-|---|---|
-| `NODE_ENV` | `production` |
-| `ENABLE_DEMO_PROFILES` | `true` |
-| `JWT_SECRET` | segredo aleatório com pelo menos 32 caracteres |
-| `HEOM_DATA_FILE` | `/tmp/heom-demo.json` |
-| `HEOM_STORAGE_DIR` | `/tmp/heom-storage` |
-| `MAX_ASSET_PHOTO_MB` | `3` |
-| `VITE_HEOM_MODE` | `demo` |
-| `VITE_HEOM_WS` | `false` |
+Não configure `VITE_API_URL`, CORS adicional, Render ou um projeto separado para frontend/backend.
 
-Não configure `VITE_API_URL`: o frontend chama `/api` no mesmo domínio da Vercel. Não configure `INITIAL_ADMIN_PASSWORD`: os quatro perfis de teste entram pelos cartões sem senha.
+## 3. Conferência após a publicação
 
-Gere o segredo técnico localmente no Git Bash com:
-
-```bash
-node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
-```
-
-Copie a saída diretamente para `JWT_SECRET` na Vercel. Esse valor assina as sessões e não é solicitado na tela de login.
-
-## 3. Fluxo de demonstração
-
-A API é publicada pela Function `api/[...path].ts`, que encaminha as rotas `/api/*` para a aplicação Express. O servidor demonstrativo exporta o Express quando `VERCEL=1` e mantém `server.listen` apenas na execução local.
-
-Os cartões exibem quatro perfis fictícios:
-
-- Administrador de teste
-- Gestor patrimonial
-- Operador de inventário
-- Acesso para consulta
-
-Os IDs de demonstração são determinísticos para que o token emitido continue reconhecido quando outra instância serverless atender a próxima requisição.
-
-## 4. Testes após o deploy
-
-Abra primeiro:
+Substitua o domínio de exemplo pelo endereço que a Vercel atribuiu:
 
 ```text
-https://projetoheom.vercel.app/api/health
+https://SEU-PROJETO.vercel.app/
+https://SEU-PROJETO.vercel.app/api/health
 ```
 
-A resposta deve ser JSON com `application: HEOM` e `status: operacional`.
+Na interface, confirme a abertura direta do dashboard, a troca entre os quatro perfis e o cadastro de um equipamento fictício. Atualize a página e confirme que o cadastro permanece no mesmo navegador.
 
-Depois abra:
+## 4. Armazenamento e limite de escopo
 
-```text
-https://projetoheom.vercel.app/api/demo/profiles
-```
+Os registros são guardados no `localStorage` e as imagens no `IndexedDB` do navegador visitante. Cada pessoa/dispositivo tem uma base isolada. Não são enviados ao servidor nem compartilhados com outros visitantes. Limpar os dados do site apaga o conjunto local. Isso é intencional: sem banco persistente externo, não existe uma base pública comum com sincronização multiusuário.
 
-A resposta deve listar os quatro perfis. Na interface, clique em qualquer cartão e confirme que o dashboard abre.
+As Vercel Functions não gravam a demonstração em `/tmp`. O handler serverless não depende de filesystem persistente, banco de dados ou processo residente.
 
-## 5. Limitações do modo demonstrativo serverless
+## 5. Limitações funcionais da hospedagem
 
-- Vercel Functions não mantêm WebSocket persistente. `VITE_HEOM_WS=false` desativa o canal em tempo real na hospedagem; o WebSocket continua disponível na execução local/institucional.
-- O sistema JSON e as fotografias são gravados em `/tmp`, área temporária e isolada por instância. O conteúdo pode desaparecer após cold starts/redeploys e não é compartilhado entre instâncias. Isso permite testar login e navegação, mas não garante consistência de alterações de inventário entre visitantes.
-- As funções Vercel têm limite de payload de requisição de 4,5 MB no padrão geral; mantenha o envio de fotos pequeno. Para uploads maiores, use upload direto para Vercel Blob.
-- OCR com Tesseract depende de binário externo e não está disponível automaticamente na Function. O sistema deve sinalizar mecanismo OCR indisponível e permitir conferência/preenchimento manual.
-- Não insira dados de pacientes, servidores, equipamentos reais ou qualquer dado institucional. Todos os registros desta instância são fictícios e o acesso sem senha é público.
+- WebSocket persistente foi removido do fluxo demonstrativo; atualizações são feitas sob demanda.
+- OCR Tesseract não está empacotado na Function; a interface permite revisar/transcrever fabricante, modelo e número de série manualmente.
+- Leitura QR por câmera depende de `BarcodeDetector`; scanner USB/entrada manual são alternativas.
+- Similaridade por imagem é dHash local, não IA de reconhecimento.
+- Planta e rastreamento são demonstrativos, sem hardware físico.
 
-Para uma demonstração multiusuário com cadastros/fotos persistentes, conecte posteriormente um banco PostgreSQL e Vercel Blob. O modo institucional com PostgreSQL/MQTT e autenticação própria permanece separado e não deve habilitar acesso rápido público.
+Consulte `KNOWN_LIMITATIONS.md`. Não utilize a implantação pública para inventário real, dados pessoais, decisões clínicas ou operação hospitalar.

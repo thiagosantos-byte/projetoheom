@@ -1,28 +1,44 @@
-# Modo de demonstração local sem Docker
+# Modo de demonstração integrado — HEOM 0.4.0
 
-## Objetivo
+A demonstração padrão não utiliza Docker, PostgreSQL, Mosquitto, JWT, conta, e-mail, senha ou `.env`.
 
-Permitir que a equipe valide a interface e os fluxos essenciais do HEOM sem instalar Docker Desktop, PostgreSQL ou Mosquitto.
+## Iniciar
 
-## Como funciona
+Na raiz `heom-platform`:
 
-- A interface React é servida pelo Vite em `localhost:5173`.
-- A API de demonstração roda em `localhost:4000`.
-- Os dados são persistidos em `apps/api/data/heom-demo.json`.
-- As senhas são armazenadas com hash bcrypt.
-- A autenticação usa token assinado localmente.
-- O WebSocket local transmite atualizações para as telas abertas.
-- O simulador atualiza a localização estimada, cria eventos e pode gerar alertas.
+```bash
+npm install
+npm run dev
+```
 
-## Limitações importantes
+Abra `http://localhost:5173`. A aplicação React, o middleware Vite e as rotas Express compartilham um único processo HTTP e uma única porta. Não execute a API e a interface em terminais separados.
 
-- O arquivo JSON não é apropriado para concorrência e disponibilidade de uma implantação hospitalar.
-- Não há broker MQTT neste modo.
-- Não há integração com BLE, RFID ou UWB físico.
-- As localizações dos equipamentos são simulações didáticas.
-- A planta é ilustrativa e aguarda desenho oficial validado pelo HEOM.
-- Não inserir dados pessoais, dados de pacientes ou patrimônio real.
+## Perfis
 
-## Retornar ao modo completo
+Na primeira visita, selecione Administrador, Gestor, Operador ou Consulta. O seletor no cabeçalho permite alternar durante a navegação. São personagens para testar a interface, não contas autenticadas nem controles de segurança de produção.
 
-O modo completo continua no arquivo `apps/api/src/server.ts`, usando PostgreSQL e MQTT. A implantação deve ser configurada e homologada separadamente.
+## Dados e fotografias
+
+- Registros estruturados: `localStorage`.
+- Fotografias: `IndexedDB`.
+- As alterações persistem no navegador e origem que as criaram; não são compartilhadas entre visitantes ou dispositivos.
+- Todos os dados iniciais são fictícios e identificados como `SIMULADO`.
+
+## Recursos condicionais
+
+- Similaridade fotográfica: dHash local, somente triagem visual.
+- QR Code: geração local; leitura por `BarcodeDetector` quando disponível, ou entrada manual/leitor USB.
+- OCR Tesseract: não está embarcado na demonstração web; a interface informa a indisponibilidade e oferece revisão manual dos campos da plaqueta.
+- Rastreamento: simulador local sem gateways, MQTT, BLE, RFID ou UWB físicos.
+- Planta: esquema ilustrativo, não é planta arquitetônica oficial.
+
+## Build
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm start
+```
+
+Consulte `README.md`, `docs/ARCHITECTURE.md` e `docs/KNOWN_LIMITATIONS.md`.

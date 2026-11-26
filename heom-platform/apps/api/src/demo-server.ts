@@ -8,9 +8,6 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import bcrypt from 'bcryptjs';
-import jwt, { type JwtPayload } from 'jsonwebtoken';
-import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
 import { canTransitionMovement, trackingStatusForObservation } from './domain.js';
 import { parseInventoryCsv, findCsvDuplicates, type InventoryCsvRow } from './csv.js';
@@ -19,8 +16,8 @@ import { DEMO_PROFILE_DEFINITIONS } from './demo-accounts.js';
 import { photoUpload, csvUpload, maxAssetPhotoMb, saveAssetPhoto, readStoredPhoto, deleteStoredPhoto, runLocalOcr, makeQrSvg, type SavedPhoto } from './media.js';
 
 type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
-type AuthUser = { id: string; name: string; email: string; role: Role };
-type DemoUser = AuthUser & { passwordHash: string; active: boolean; createdAt: string; isDemoProfile?: boolean };
+type AuthUser = { id: string; name: string; email?: string; role: Role };
+type DemoUser = AuthUser & { active: boolean; createdAt: string; isDemoProfile?: boolean };
 type Department = { id: string; code: string; name: string; description: string; dataOrigin: string; active: boolean };
 type Room = { id: string; code: string; name: string; departmentId: string; departmentName: string; floorLabel: string; isRestricted: boolean; dataOrigin: string; mapX: number; mapY: number };
 type Asset = {
@@ -47,10 +44,9 @@ declare global { namespace Express { interface Request { user?: AuthUser } } }
 
 const app = express();
 const server = http.createServer(app);
-const port = Number(process.env.PORT || process.env.APP_PORT || 4000);
-const jwtSecret = process.env.JWT_SECRET || '';
-const demoProfilesEnabled = process.env.ENABLE_DEMO_PROFILES === 'true' || (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_PROFILES !== 'false');
-const defaultDataFile = process.env.VERCEL === '1' ? '/tmp/heom-demo.json' : resolve(dirname(fileURLToPath(import.meta.url)), '../data/heom-demo.json');
+const port = Number(process.env.PORT || process.env.APP_PORT || 5173);
+const demoProfilesEnabled = true;
+const defaultDataFile = resolve(dirname(fileURLToPath(import.meta.url)), '../data/heom-demo.json');
 const dataFile = resolve(process.env.HEOM_DATA_FILE || defaultDataFile);
 const uuid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -59,6 +55,7 @@ let saveQueue: Promise<void> = Promise.resolve();
 let lastPersistError: string | null = null;
 
 function persist(): Promise<void> {
+  if (process.env.VERCEL === '1') return Promise.resolve();
   // Serializa as gravações e captura o snapshot dentro da fila para evitar que
   // uma gravação atrasada sobrescreva um estado mais recente.
   const operation = saveQueue.catch((previousError: unknown) => {
@@ -80,30 +77,26 @@ function persist(): Promise<void> {
   return operation;
 }
 
-/** Cria contas de avaliação sem senha conhecida, acessíveis apenas pelo fluxo
- * de entrada rápida do servidor demonstrativo. Nunca é importado pelo servidor institucional. */
+/** IDs estáveis para as personas demonstrativas; não representam contas autenticadas. */
 function stableIdFromKey(key: string): string {
   const hex = crypto.createHash('sha256').update(`HEOM-DEMO:${key}`).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-function stableDemoUserId(email: string): string {
-  return stableIdFromKey(`USER:${email.toLowerCase()}`);
+function stableDemoUserId(role: Role): string {
+  return stableIdFromKey(`DEMO_PROFILE:${role}`);
 }
 
 async function ensureDemoProfiles(): Promise<boolean> {
   if (!demoProfilesEnabled) return false;
   let changed = false;
   for (const definition of DEMO_PROFILE_DEFINITIONS) {
-    const alreadyExists = store.users.some((user) => user.email.toLowerCase() === definition.email);
+    const alreadyExists = store.users.some((user) => user.role === definition.role && user.isDemoProfile === true);
     if (alreadyExists) continue;
-    const oneTimeSecret = crypto.randomBytes(48).toString('base64url');
     store.users.push({
-      id: stableDemoUserId(definition.email),
+      id: stableDemoUserId(definition.role),
       name: definition.name,
-      email: definition.email,
       role: definition.role,
-      passwordHash: await bcrypt.hash(oneTimeSecret, 10),
       active: true,
       createdAt: now(),
       isDemoProfile: true
@@ -114,22 +107,8 @@ async function ensureDemoProfiles(): Promise<boolean> {
 }
 
 async function createInitialStore(): Promise<Store> {
-  // Na demonstração hospedada, as contas de avaliação entram pelos cartões
-  // de acesso rápido e não precisam de uma senha definida pelo avaliador.
-  // A conta administrativa tradicional é opcional e só é criada quando uma
-  // senha própria é configurada explicitamente.
-  const adminPassword = process.env.INITIAL_ADMIN_PASSWORD || '';
+  // A demonstração usa personas por função; não cria contas, e-mails ou senhas.
   const users: DemoUser[] = [];
-  if (adminPassword) {
-    if (adminPassword.length < 14) throw new Error('INITIAL_ADMIN_PASSWORD deve ter pelo menos 14 caracteres quando configurada.');
-    users.push({
-      id: uuid(), name: process.env.INITIAL_ADMIN_NAME || 'Administrador institucional de teste',
-      email: (process.env.INITIAL_ADMIN_EMAIL || 'admin@heom.local').toLowerCase(),
-      role: 'ADMIN', passwordHash: await bcrypt.hash(adminPassword, 10), active: true, createdAt: now()
-    });
-  } else if (!demoProfilesEnabled) {
-    throw new Error('Configure INITIAL_ADMIN_PASSWORD ou habilite ENABLE_DEMO_PROFILES=true para o ambiente de demonstração.');
-  }
   const departmentNames: Array<[string, string, string]> = [
     ['DEMO-UTI', 'UTI — exemplo demonstrativo', 'Setor fictício para avaliação da plataforma.'],
     ['DEMO-ENG', 'Engenharia Clínica — exemplo', 'Setor fictício para avaliação da plataforma.'],
@@ -176,8 +155,12 @@ async function createInitialStore(): Promise<Store> {
 }
 
 async function loadStore() {
-  if (jwtSecret.length < 32) throw new Error('JWT_SECRET ausente ou inválido. Execute bash ./scripts/configurar-ambiente.sh.');
-
+  // A Function Vercel não lê nem grava arquivo temporário. O estado da UI é local ao navegador.
+  if (process.env.VERCEL === '1') {
+    store = await createInitialStore();
+    await ensureDemoProfiles();
+    return;
+  }
   let contents: string;
   try {
     contents = await readFile(dataFile, 'utf8');
@@ -225,9 +208,13 @@ async function loadStore() {
     ocrResults: optionalArray(parsed.ocrResults, 'ocrResults'),
     maintenanceOrders: optionalArray(parsed.maintenanceOrders, 'maintenanceOrders')
   } as Store;
+  // Esta distribuição descarta contas legadas do antigo modo com e-mail/senha.
+  // A demonstração atual usa apenas personas fixas identificadas pela função.
+  const hadLegacyUsers = store.users.length > 0;
+  store.users = [];
   for (const asset of store.assets) asset.qrCode ||= `HEOM-ASSET:${asset.id}`;
   const addedDemoProfiles = await ensureDemoProfiles();
-  if (addedDemoProfiles) await persist();
+  if (addedDemoProfiles || hadLegacyUsers) await persist();
   console.log(`[Dados locais] Base carregada de ${dataFile}`);
 }
 
@@ -239,48 +226,22 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/demo', rateLimit({ windowMs: 15 * 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false }));
 
-const wss = new WebSocketServer({ noServer: true });
-const authenticatedSockets = new Set<WebSocket>();
-server.on('upgrade', (request, socket, head) => {
-  if (request.url !== '/ws') return socket.destroy();
-  wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
-});
-function broadcast(type: string, payload: unknown) {
-  const message = JSON.stringify({ type, payload, sentAt: now() });
-  for (const client of authenticatedSockets) if (client.readyState === WebSocket.OPEN) client.send(message);
-}
-wss.on('connection', (ws) => {
-  let authenticated = false;
-  const timeout = setTimeout(() => { if (!authenticated) ws.close(4401, 'Autenticação necessária'); }, 5000);
-  ws.on('message', (raw) => {
-    if (authenticated) return;
-    try {
-      const data = JSON.parse(raw.toString()) as { type?: string; token?: string };
-      if (data.type !== 'AUTH' || !data.token) return ws.close(4401, 'Credenciais inválidas');
-      jwt.verify(data.token, jwtSecret);
-      authenticated = true;
-      clearTimeout(timeout);
-      authenticatedSockets.add(ws);
-      ws.send(JSON.stringify({ type: 'AUTHENTICATED', payload: { message: 'Conexão local de demonstração estabelecida.' } }));
-    } catch { ws.close(4401, 'Credenciais inválidas'); }
-  });
-  ws.on('close', () => { clearTimeout(timeout); authenticatedSockets.delete(ws); });
-});
+// A demonstração integrada não abre conexão WebSocket persistente.
+// As telas consultam novamente os dados sob demanda e usam IndexedDB/localStorage.
+function broadcast(_type: string, _payload: unknown) { /* polling/refresh do cliente */ }
 
 function routeId(req: Request): string | null {
   const value = req.params.id;
   return typeof value === 'string' ? value : null;
 }
 function authenticate(req: Request, res: Response, next: NextFunction) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (!token) return res.status(401).json({ error: 'Sua sessão não foi identificada. Entre novamente.' });
-  try {
-    const payload = jwt.verify(token, jwtSecret) as JwtPayload;
-    const user = store.users.find((item) => item.id === payload.sub && item.active);
-    if (!user) return res.status(401).json({ error: 'Usuário da sessão não está ativo.' });
-    req.user = { id: user.id, name: user.name, email: user.email, role: user.role };
+  const requestedRole = String(req.headers['x-heom-demo-role'] || '').toUpperCase() as Role;
+  if (demoProfilesEnabled && ['ADMIN', 'GESTOR', 'OPERADOR', 'CONSULTA'].includes(requestedRole)) {
+    const profile = DEMO_PROFILE_DEFINITIONS.find((item) => item.role === requestedRole)!;
+    req.user = { id: stableDemoUserId(requestedRole), name: profile.name, role: requestedRole };
     return next();
-  } catch { return res.status(401).json({ error: 'Sua sessão expirou. Entre novamente.' }); }
+  }
+  return res.status(401).json({ error: 'Selecione uma função demonstrativa por meio do seletor de perfil.' });
 }
 function allowRoles(...roles: Role[]) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -314,11 +275,11 @@ app.get('/api/health', (_req, res) => res.json({
   database: 'nao_aplicavel',
   mqtt: 'nao_utilizado',
   tracking: 'simulador_interno',
-  mode: 'DEMONSTRACAO_LOCAL_SEM_DOCKER',
-  persistence: 'arquivo JSON local',
+  mode: 'DEMONSTRACAO_NAVEGADOR',
+  persistence: 'IndexedDB/localStorage no navegador para a demonstração; sem persistência de servidor',
   persistenceStatus: lastPersistError ? 'falha' : 'operacional',
   persistenceError: lastPersistError,
-  message: 'Modo de demonstração local. A persistência utiliza arquivo JSON; PostgreSQL e broker MQTT não são iniciados nem consultados.',
+  message: 'Modo de demonstração pública. Os registros de uso ficam no navegador visitante; PostgreSQL, MQTT e disco temporário não são necessários.',
   timestamp: now()
 }));
 
@@ -326,32 +287,18 @@ app.get('/api/health', (_req, res) => res.json({
 // institucional (server.ts) não importa nem registra entrada rápida de perfis.
 app.get('/api/demo/profiles', (_req, res) => {
   if (!demoProfilesEnabled) return res.status(404).json({ error: 'Perfis de demonstração desativados.' });
-  const data = DEMO_PROFILE_DEFINITIONS.filter((profile) =>
-    store.users.some((user) => user.email === profile.email && user.active && user.isDemoProfile === true)
-  ).map(({ email, name, role, description, title }) => ({ email, name, role, description, title }));
-  return res.json({ data, mode: 'DEMONSTRACAO_LOCAL' });
+  return res.json({ data: DEMO_PROFILE_DEFINITIONS.map((profile) => ({ ...profile })), mode: 'DEMONSTRACAO_NAVEGADOR' });
 });
 
 app.post('/api/demo/quick-login', async (req, res) => {
   if (!demoProfilesEnabled) return res.status(404).json({ error: 'Perfis de demonstração desativados.' });
-  const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Selecione um perfil de demonstração válido.' });
-  const user = store.users.find((item) => item.email.toLowerCase() === parsed.data.email.toLowerCase() && item.active && item.isDemoProfile === true);
-  if (!user) return res.status(404).json({ error: 'Este perfil de teste não está disponível. Reinicie o modo de demonstração ou consulte o administrador.' });
-  await audit(user.id, 'ACESSO_COM_PERFIL_DE_TESTE', 'USER', user.id, { role: user.role, demo: true });
-  const token = jwt.sign({ sub: user.id, name: user.name, email: user.email, role: user.role }, jwtSecret, { expiresIn: '8h' });
-  return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  const parsed = z.object({ role: z.enum(['ADMIN', 'GESTOR', 'OPERADOR', 'CONSULTA']) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Selecione um perfil demonstrativo válido.' });
+  const profile = DEMO_PROFILE_DEFINITIONS.find((item) => item.role === parsed.data.role)!;
+  return res.json({ user: { id: stableDemoUserId(profile.role), name: profile.name, role: profile.role }, mode: 'DEMONSTRACAO_NAVEGADOR' });
 });
 
-app.post('/api/auth/login', async (req, res) => {
-  const parsed = z.object({ email: z.string().email(), password: z.string().min(1) }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Informe um e-mail válido e sua senha.' });
-  const user = store.users.find((item) => item.email.toLowerCase() === parsed.data.email.toLowerCase() && item.active);
-  if (!user || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) return res.status(401).json({ error: 'E-mail ou senha não conferem.' });
-  await audit(user.id, 'LOGIN_REALIZADO', 'USER', user.id);
-  const token = jwt.sign({ sub: user.id, name: user.name, email: user.email, role: user.role }, jwtSecret, { expiresIn: '8h' });
-  return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
-});
+app.post('/api/auth/login', (_req, res) => res.status(410).json({ error: 'Login por e-mail e senha foi desativado nesta distribuição demonstrativa. Selecione um perfil de teste.' }));
 app.get('/api/auth/me', authenticate, (req, res) => res.json({ user: req.user }));
 
 app.get('/api/departments', authenticate, (_req, res) => res.json({ data: store.departments.filter((item) => item.active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) }));
@@ -486,6 +433,7 @@ app.get('/api/assets/:id/photos', authenticate, (req, res) => {
   return res.json({ data });
 });
 app.post('/api/assets/:id/photos', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'), photoUpload.single('photo'), async (req, res) => {
+  if (process.env.VERCEL === '1') return res.status(501).json({ error: 'O armazenamento HTTP de fotografias não é habilitado na Function. A demonstração pública armazena as fotos diretamente no IndexedDB do navegador.' });
   const id = routeId(req);
   if (!id) return res.status(400).json({ error: 'Identificador inválido.' });
   if (!store.assets.some((item) => item.id === id && !item.archivedAt)) return res.status(404).json({ error: 'Equipamento não encontrado.' });
@@ -502,6 +450,7 @@ app.post('/api/assets/:id/photos', authenticate, allowRoles('ADMIN', 'GESTOR', '
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : 'Não foi possível armazenar a fotografia.' }); }
 });
 app.get('/api/assets/:id/photos/:photoId/file', authenticate, async (req, res) => {
+  if (process.env.VERCEL === '1') return res.status(501).json({ error: 'A leitura de arquivos no servidor não é habilitada na Function. Consulte a fotografia pelo navegador que a armazenou.' });
   const id = routeId(req); const photoId = typeof req.params.photoId === 'string' ? req.params.photoId : '';
   const photo = store.assetPhotos.find((item) => item.id === photoId && item.assetId === id && !item.archivedAt);
   if (!photo) return res.status(404).json({ error: 'Fotografia não encontrada.' });
@@ -509,6 +458,7 @@ app.get('/api/assets/:id/photos/:photoId/file', authenticate, async (req, res) =
   catch { return res.status(404).json({ error: 'Arquivo da fotografia não está disponível no armazenamento local.' }); }
 });
 app.delete('/api/assets/:id/photos/:photoId', authenticate, allowRoles('ADMIN', 'GESTOR'), async (req, res) => {
+  if (process.env.VERCEL === '1') return res.status(501).json({ error: 'A gestão de fotografias da demonstração pública ocorre no IndexedDB do navegador.' });
   const id = routeId(req); const photoId = typeof req.params.photoId === 'string' ? req.params.photoId : '';
   const photo = store.assetPhotos.find((item) => item.id === photoId && item.assetId === id && !item.archivedAt);
   if (!photo) return res.status(404).json({ error: 'Fotografia não encontrada.' });
@@ -516,6 +466,7 @@ app.delete('/api/assets/:id/photos/:photoId', authenticate, allowRoles('ADMIN', 
   return res.json({ message: 'Fotografia removida. O histórico de auditoria foi preservado.' });
 });
 app.post('/api/assets/:id/photos/:photoId/ocr', authenticate, allowRoles('ADMIN', 'GESTOR', 'OPERADOR'), async (req, res) => {
+  if (process.env.VERCEL === '1') return res.status(501).json({ error: 'OCR Tesseract depende de executável nativo indisponível na Function. Utilize a transcrição manual na interface.' });
   const id = routeId(req); const photoId = typeof req.params.photoId === 'string' ? req.params.photoId : '';
   const photo = store.assetPhotos.find((item) => item.id === photoId && item.assetId === id && !item.archivedAt);
   if (!photo) return res.status(404).json({ error: 'Fotografia não encontrada.' });
@@ -550,6 +501,7 @@ app.post('/api/assets/:id/ocr/:resultId/confirm', authenticate, allowRoles('ADMI
   return res.json({ message: 'Dados revisados e confirmados no cadastro do equipamento.', data: assetView(asset) });
 });
 app.post('/api/assets/search-by-image', authenticate, photoUpload.single('photo'), async (req, res) => {
+  if (process.env.VERCEL === '1') return res.status(501).json({ error: 'A comparação visual da demonstração pública é executada localmente no navegador.' });
   if (!req.file) return res.status(400).json({ error: 'Selecione uma fotografia para pesquisar.' });
   try {
     const { createDifferenceHash } = await import('./media.js');
@@ -753,16 +705,8 @@ app.post('/api/notifications/:id/read', authenticate, async (req, res) => {
   await audit(req.user!.id, 'NOTIFICACAO_MARCADA_COMO_LIDA', 'NOTIFICATION', id);
   return res.json({ message: 'Notificação marcada como lida.', data: { id: notification.id, readAt: notification.readAt } });
 });
-app.get('/api/admin/users', authenticate, allowRoles('ADMIN'), (_req, res) => res.json({ data: store.users.map(({ passwordHash: _passwordHash, ...user }) => user).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) }));
-app.post('/api/admin/users', authenticate, allowRoles('ADMIN'), async (req, res) => {
-  const parsed = z.object({ name: z.string().trim().min(3).max(140), email: z.string().email(), password: z.string().min(12).max(128), role: z.enum(['ADMIN', 'GESTOR', 'OPERADOR', 'CONSULTA']) }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Revise nome, e-mail, perfil e senha (mínimo de 12 caracteres).' });
-  if (store.users.some((item) => item.email.toLowerCase() === parsed.data.email.toLowerCase())) return res.status(409).json({ error: 'Já existe um usuário com esse e-mail.' });
-  const user: DemoUser = { id: uuid(), name: parsed.data.name, email: parsed.data.email.toLowerCase(), passwordHash: await bcrypt.hash(parsed.data.password, 10), role: parsed.data.role, active: true, createdAt: now() };
-  store.users.push(user);
-  await audit(req.user!.id, 'USUARIO_CADASTRADO', 'USER', user.id, { role: user.role });
-  return res.status(201).json({ data: { id: user.id, name: user.name, email: user.email, role: user.role, active: user.active } });
-});
+app.get('/api/admin/users', authenticate, allowRoles('ADMIN'), (_req, res) => res.json({ data: store.users.slice().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) }));
+app.post('/api/admin/users', authenticate, allowRoles('ADMIN'), (_req, res) => res.status(410).json({ error: 'Criação de contas foi desativada no ambiente de demonstração. Utilize os quatro perfis fixos.' }));
 
 const storeReady = loadStore();
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -770,32 +714,50 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (message.includes('Formato inválido') || message.includes('File too large') || message.includes('Unexpected field') || message.includes('Too many files')) return res.status(400).json({ error: message.includes('File too large') ? `A imagem excede o limite de ${maxAssetPhotoMb} MB.` : message });
   console.error('[API local]', error); return res.status(500).json({ error: 'Não foi possível concluir a operação local.' });
 });
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint da API não encontrado.' }));
 
 const bindHost = process.env.HOST || process.env.DEMO_BIND_HOST || '127.0.0.1';
 
-// Em execução local, a API mantém o servidor HTTP e WebSocket tradicionais.
-// Na Vercel, o Express é exportado para ser atendido por uma Function HTTP;
-// Functions não mantêm um servidor TCP/WebSocket permanente.
+// Desenvolvimento local: um único processo, uma única porta e uma aplicação integrada.
+// A API Express e o middleware React/Vite compartilham o mesmo servidor HTTP.
+// Na Vercel, não há listen(): o Express é exportado como Function HTTP.
 if (process.env.VERCEL !== '1') {
+  const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+  const productionBuild = process.env.NODE_ENV === 'production' || process.env.HEOM_SERVE_STATIC === 'true';
+  if (productionBuild) {
+    const webDist = resolve(projectRoot, 'apps/web/dist');
+    app.use(express.static(webDist, { index: false, maxAge: '1h' }));
+    app.use((req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
+      res.sendFile(resolve(webDist, 'index.html'), (error) => { if (error) next(error); });
+    });
+  } else {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      configFile: resolve(projectRoot, 'apps/web/vite.config.ts'),
+      root: resolve(projectRoot, 'apps/web'),
+      server: { middlewareMode: true, hmr: { server } },
+      appType: 'spa'
+    });
+    app.use(vite.middlewares);
+  }
   storeReady.then(() => {
     server.listen(port, bindHost, () => {
       console.log('');
-      console.log('HEOM — MODO DE DEMONSTRAÇÃO LOCAL (SEM DOCKER)');
+      console.log('HEOM — APLICAÇÃO INTEGRADA');
+      console.log('Sistema: http://' + bindHost + ':' + port);
       console.log('API: http://' + bindHost + ':' + port + '/api/health');
-      console.log('Perfis de teste: ' + (demoProfilesEnabled ? 'habilitados no modo demonstrativo' : 'desativados'));
-      console.log('Persistência: ' + dataFile);
-      console.log('Rastreamento: simulador interno; sem PostgreSQL, MQTT ou hardware real.');
+      console.log('Modo: demonstração sem contas, e-mails ou senhas');
+      console.log('Dados do navegador: localStorage + IndexedDB');
+      console.log('Rastreamento: simulador fictício; sem PostgreSQL, MQTT ou hardware físico.');
       console.log('');
     });
   }).catch((error) => {
-    console.error('[HEOM] Falha ao inicializar a base demonstrativa:', error);
+    console.error('[HEOM] Falha ao inicializar a demonstração:', error);
     process.exitCode = 1;
   });
-
   function shutdown() {
-    console.log('\nEncerrando HEOM local...');
-    for (const socket of authenticatedSockets) socket.close(1001, 'Servidor encerrado');
-    wss.close();
+    console.log('\nEncerrando HEOM integrado...');
     server.close(() => process.exit(0));
   }
   process.once('SIGINT', shutdown);

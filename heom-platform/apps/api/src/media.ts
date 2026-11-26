@@ -10,7 +10,9 @@ import QRCode from 'qrcode';
 
 const execFileAsync = promisify(execFile);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../');
-const configuredStorage = process.env.HEOM_STORAGE_DIR || (process.env.VERCEL === '1' ? '/tmp/heom-storage' : 'storage');
+// A mídia do modo público é persistida no IndexedDB do navegador. Este diretório
+// serve apenas à execução local legada; nenhuma Function depende de filesystem.
+const configuredStorage = process.env.HEOM_STORAGE_DIR || 'storage';
 const configuredMaxPhotoMb = Number(process.env.MAX_ASSET_PHOTO_MB || 12);
 const maxPhotoBytes = Number.isFinite(configuredMaxPhotoMb) ? Math.min(12, Math.max(1, configuredMaxPhotoMb)) * 1024 * 1024 : 12 * 1024 * 1024;
 export const mediaRoot = isAbsolute(configuredStorage) ? resolve(configuredStorage) : resolve(projectRoot, configuredStorage);

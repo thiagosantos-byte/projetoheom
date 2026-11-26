@@ -17,7 +17,7 @@ import { compareDifferenceHash, similarityLabel } from './visual.js';
 import { photoUpload, csvUpload, maxAssetPhotoMb, saveAssetPhoto, readStoredPhoto, deleteStoredPhoto, runLocalOcr, makeQrSvg } from './media.js';
 
 type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
-type AuthUser = { id: string; name: string; email: string; role: Role };
+type AuthUser = { id: string; name: string; email?: string; role: Role };
 declare global { namespace Express { interface Request { user?: AuthUser } } }
 
 const app = express();

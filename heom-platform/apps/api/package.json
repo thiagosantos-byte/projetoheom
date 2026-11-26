@@ -1,18 +1,17 @@
 {
   "name": "@heom/api",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/demo-server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js",
+    "start": "node dist/demo-server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "tsx src/migrate.ts",
     "db:seed": "tsx src/seed.ts",
     "test": "tsx --test src/domain.test.ts src/csv.test.ts src/visual.test.ts src/demo-accounts.test.ts",
     "dev:local": "tsx watch src/demo-server.ts",
-    "dev:infra": "tsx watch src/server.ts",
     "start:demo": "node dist/demo-server.js"
   },
   "dependencies": {

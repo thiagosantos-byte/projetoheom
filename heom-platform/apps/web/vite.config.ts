@@ -7,17 +7,17 @@ const projectEnvDirectory = fileURLToPath(new URL('../../', import.meta.url));
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectEnvDirectory, '');
   return {
+    root: fileURLToPath(new URL('.', import.meta.url)),
     plugins: [react()],
+    define: {
+      'import.meta.env.VITE_HEOM_MODE': JSON.stringify('demo'),
+      'import.meta.env.VITE_HEOM_WS': JSON.stringify('false')
+    },
     server: {
-      // A demonstração local não deve expor a entrada rápida de perfis na LAN.
-      // O script institucional define VITE_DEV_HOST=0.0.0.0 para acesso cabeado.
       host: env.VITE_DEV_HOST || '127.0.0.1',
       port: 5173,
-      strictPort: true,
-      proxy: {
-        '/api': { target: 'http://127.0.0.1:4000', changeOrigin: true },
-        '/ws': { target: 'ws://127.0.0.1:4000', ws: true }
-      }
-    }
+      strictPort: true
+    },
+    build: { outDir: 'dist', emptyOutDir: true }
   };
 });

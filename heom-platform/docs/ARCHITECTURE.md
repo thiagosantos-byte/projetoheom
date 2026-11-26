@@ -1,33 +1,37 @@
-# Arquitetura HEOM 0.3.1
+# Arquitetura HEOM 0.4.0
 
-## Modos de execução
+## Aplicação única
 
-- `dev:local`: `demo-server.ts` + React/Vite; JSON persistente, imagens locais, simulador interno.
-- `dev:infra`: `server.ts` + React/Vite; PostgreSQL e Mosquitto nativos, migrações SQL, arquivos de imagens no armazenamento local.
+A raiz `heom-platform` contém um único `package.json`, uma instalação npm por workspaces e scripts de desenvolvimento/build centralizados.
 
-Os contratos centrais de inventário, identificação fotográfica, QR, manutenção, alertas, movimentações e relatórios são disponibilizados nos dois modos.
+- **Local:** `apps/api/src/demo-server.ts` cria um servidor HTTP Express. As rotas `/api/*` são registradas primeiro e o middleware Vite/React é montado no mesmo servidor. Porta padrão: `5173`. Um único `npm run dev` inicia tudo.
+- **Build:** `npm run build` compila a API e gera `apps/web/dist`.
+- **Vercel:** o diretório `apps/web/dist` é a publicação estática; `api/[...path].ts` exporta o handler HTTP para `/api/*` no mesmo projeto/domínio. O código não chama `server.listen()` na Function.
 
-## Identificação de imagens
+## Modo demonstrativo local-first
 
-- Upload multipart com limite de 12 MB, MIME allow-list e validação de assinatura real do arquivo;
-- JPG, PNG e WEBP;
-- nomes físicos aleatórios e diretório separado por UUID do ativo;
-- metadados e hash visual guardados em JSON (demonstração) ou PostgreSQL (institucional);
-- rota de arquivo autenticada;
-- OCR local executado com Tesseract CLI; ausência de engine/idioma retorna estado explícito;
-- dHash 64-bit calculado localmente por Sharp (9×8 grayscale), similaridade por distância de Hamming;
-- QR Code local com payload `HEOM-ASSET:<UUID>`.
+A interface mantém os contratos `api()` e `apiBlob()`, mas em `VITE_HEOM_MODE=demo` direciona as operações para `local-demo-api.ts` em vez de depender de autenticação ou de uma API com estado em servidor.
 
-A similaridade visual é um método de triagem, não um classificador de identidade. A precisão depende de ângulo, iluminação, fundo e enquadramento; confirmação humana por patrimônio/plaqueta/série é obrigatória.
+- `localStorage`: equipamentos, setores, ambientes, alertas, movimentações, ordens, notificações e eventos de teste.
+- `IndexedDB`: arquivos de imagem em formato Blob.
+- Perfil ativo: `localStorage['heom.demo.role']`, com os identificadores `ADMIN`, `GESTOR`, `OPERADOR` e `CONSULTA`.
+- `User.id` é um identificador local determinístico por função. Não existe e-mail, senha, token, registro de usuário nem provedor de autenticação.
+- As restrições de permissão são aplicadas nas operações do adaptador e na interface. Como os perfis são públicos e editáveis, isso não substitui autorização de servidor para produção.
 
-## Manutenção
+A base local é isolada por origem e navegador. Não sincroniza visitantes nem dispositivos diferentes. O objetivo é uma demonstração sem banco externo e sem gravação temporária na infraestrutura serverless.
 
-Ordens com tipo preventiva, corretiva, calibração ou inspeção, prioridade, prazos, responsável e ciclo de status. Uma ordem corretiva marca o ativo em manutenção; a conclusão de todas as ordens abertas permite retornar para operação. Regras mais sofisticadas por categoria/calibração são etapas de homologação.
+## Fotografias, imagem, OCR e QR
 
-## Rastreamento
+- Fotos JPG/PNG/WEBP são armazenadas em IndexedDB; metadados e associação com equipamento ficam em localStorage.
+- Hash dHash 64-bit é calculado em canvas para busca aproximada por similaridade.
+- OCR Tesseract é indisponível no navegador/serverless sem instalar o binário e os modelos. O fluxo demonstra revisão manual dos campos, sem afirmar que OCR executou.
+- QR Code é gerado no cliente como SVG pelo pacote `qrcode`, com payload `HEOM-ASSET:<UUID>`.
+- A câmera QR utiliza `BarcodeDetector` se o navegador suportar; há campo de leitura manual/scanner USB como alternativa.
 
-O modo local processa eventos pelo simulador interno. O modo institucional recebe eventos MQTT e armazena eventos no PostgreSQL. BLE/UWB/RFID físicos exigem gateways, tags, configuração, levantamento de cobertura, autenticação MQTT e ensaios. RSSI é uma estimativa de zona, não uma coordenada precisa.
+## API Express legada e Function
 
-## Rede e dependências
+O Express mantém as rotas demonstrativas para diagnóstico/compatibilidade e a Function Vercel exporta o handler. A Function não grava em `/tmp`; seu estado em memória é transitório. A interface pública não depende desse estado: os dados operacionais de demonstração são persistidos localmente no navegador.
 
-Nenhuma aplicação usa Docker. Nenhum recurso essencial depende de cloud, CDN ou API pública. Para modo institucional, PostgreSQL e Mosquitto devem ser executados nativamente como serviços do host.
+## Serviços externos
+
+O modo público não conecta PostgreSQL, MQTT, gateways, WebSocket, Tesseract remoto ou mapa externo. A planta e o rastreamento são explicitamente demonstrativos. O modo institucional legado permanece em `apps/api/src/server.ts`, mas não é o comando padrão, não é usado pela demonstração Vercel e requer configuração de infraestrutura própria.
