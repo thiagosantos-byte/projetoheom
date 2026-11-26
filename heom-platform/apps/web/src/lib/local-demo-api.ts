@@ -133,42 +133,76 @@ export class LocalApiError extends Error { constructor(message: string, public s
 
 function openPhotoDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(PHOTO_DB, 1);
+    if (typeof indexedDB === 'undefined') {
+      reject(new LocalApiError('O navegador bloqueou o armazenamento de fotografias. Abra o HEOM em uma janela normal do Chrome/Edge e habilite os dados do site.', 503));
+      return;
+    }
+    let request: IDBOpenDBRequest;
+    try { request = indexedDB.open(PHOTO_DB, 1); }
+    catch (error) { reject(new LocalApiError(`Não foi possível iniciar o armazenamento de fotografias: ${error instanceof Error ? error.message : 'acesso ao IndexedDB bloqueado'}`, 503)); return; }
     request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains(PHOTO_STORE)) db.createObjectStore(PHOTO_STORE); };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('Não foi possível abrir o armazenamento local de fotografias.'));
+    request.onsuccess = () => { const db = request.result; db.onversionchange = () => db.close(); resolve(db); };
+    request.onerror = () => reject(new LocalApiError(`Falha ao abrir o banco local de fotografias: ${request.error?.message || 'erro de armazenamento do navegador'}`, 503));
+    request.onblocked = () => reject(new LocalApiError('O armazenamento de fotografias está ocupado por outra aba do HEOM. Feche as outras abas do sistema e tente novamente.', 503));
   });
 }
-async function photoPut(photoId: string, blob: Blob): Promise<void> {
+
+async function photoTransaction<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   const db = await openPhotoDb();
-  await new Promise<void>((resolve, reject) => { const tx = db.transaction(PHOTO_STORE, 'readwrite'); tx.objectStore(PHOTO_STORE).put(blob, photoId); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
-  db.close();
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      let tx: IDBTransaction;
+      let request: IDBRequest<T>;
+      try { tx = db.transaction(PHOTO_STORE, mode); request = action(tx.objectStore(PHOTO_STORE)); }
+      catch (error) { reject(new LocalApiError(`Não foi possível acessar o armazenamento de fotografias: ${error instanceof Error ? error.message : 'transação indisponível'}`, 503)); return; }
+      let result: T | undefined;
+      request.onsuccess = () => { result = request.result; };
+      request.onerror = () => reject(new LocalApiError(`Falha ao ler ou gravar a fotografia: ${request.error?.message || 'operação recusada pelo navegador'}`, 507));
+      tx.oncomplete = () => resolve(result as T);
+      tx.onerror = () => reject(new LocalApiError(`A gravação da fotografia falhou: ${tx.error?.message || 'erro na transação do navegador'}`, 507));
+      tx.onabort = () => reject(new LocalApiError(`O navegador cancelou a operação de fotografia: ${tx.error?.message || 'armazenamento indisponível ou sem espaço'}`, 507));
+    });
+  } finally { db.close(); }
 }
-async function photoGet(photoId: string): Promise<Blob | null> {
-  const db = await openPhotoDb();
-  const result = await new Promise<Blob | null>((resolve, reject) => { const req = db.transaction(PHOTO_STORE, 'readonly').objectStore(PHOTO_STORE).get(photoId); req.onsuccess = () => resolve((req.result as Blob) || null); req.onerror = () => reject(req.error); });
-  db.close(); return result;
-}
-async function photoDelete(photoId: string): Promise<void> {
-  const db = await openPhotoDb();
-  await new Promise<void>((resolve, reject) => { const tx = db.transaction(PHOTO_STORE, 'readwrite'); tx.objectStore(PHOTO_STORE).delete(photoId); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); });
-  db.close();
-}
+async function photoPut(photoId: string, blob: Blob): Promise<void> { await photoTransaction('readwrite', (store) => store.put(blob, photoId)); }
+async function photoGet(photoId: string): Promise<Blob | null> { return (await photoTransaction('readonly', (store) => store.get(photoId))) || null; }
+async function photoDelete(photoId: string): Promise<void> { await photoTransaction('readwrite', (store) => store.delete(photoId)); }
+
 async function hashImage(blob: Blob): Promise<string> {
-  const bitmap = await createImageBitmap(blob);
-  const canvas = document.createElement('canvas'); canvas.width = 9; canvas.height = 8;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) { bitmap.close(); throw new Error('Canvas indisponível para análise da fotografia.'); }
-  ctx.drawImage(bitmap, 0, 0, 9, 8); bitmap.close();
-  const pixels = ctx.getImageData(0, 0, 9, 8).data;
-  let bits = 0n; let bit = 0n;
-  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
-    const a = y * 9 + x; const b = a + 1;
-    const ga = 0.299 * pixels[a * 4]! + 0.587 * pixels[a * 4 + 1]! + 0.114 * pixels[a * 4 + 2]!;
-    const gb = 0.299 * pixels[b * 4]! + 0.587 * pixels[b * 4 + 1]! + 0.114 * pixels[b * 4 + 2]!;
-    if (ga > gb) bits |= 1n << bit; bit++;
-  }
-  return bits.toString(16).padStart(16, '0');
+  if (!blob.type.startsWith('image/')) throw new LocalApiError('O arquivo selecionado não é uma imagem reconhecida.', 415);
+  let drawable: CanvasImageSource;
+  let close: (() => void) | undefined;
+  if (typeof createImageBitmap === 'function') {
+    try { const bitmap = await createImageBitmap(blob); drawable = bitmap; close = () => bitmap.close(); }
+    catch { drawable = await loadImageElement(blob); }
+  } else drawable = await loadImageElement(blob);
+  try {
+    const canvas = document.createElement('canvas'); canvas.width = 9; canvas.height = 8;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new LocalApiError('O navegador não disponibilizou o recurso de análise de imagem. Atualize o Chrome/Edge e tente novamente.', 503);
+    ctx.drawImage(drawable, 0, 0, 9, 8);
+    const pixels = ctx.getImageData(0, 0, 9, 8).data;
+    let bits = 0n; let bit = 0n;
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      const a = y * 9 + x; const b = a + 1;
+      const ga = 0.299 * pixels[a * 4]! + 0.587 * pixels[a * 4 + 1]! + 0.114 * pixels[a * 4 + 2]!;
+      const gb = 0.299 * pixels[b * 4]! + 0.587 * pixels[b * 4 + 1]! + 0.114 * pixels[b * 4 + 2]!;
+      if (ga > gb) bits |= 1n << bit;
+      bit++;
+    }
+    return bits.toString(16).padStart(16, '0');
+  } catch (error) {
+    if (error instanceof LocalApiError) throw error;
+    throw new LocalApiError(`Não foi possível analisar a fotografia: ${error instanceof Error ? error.message : 'formato ou recurso de imagem incompatível'}`, 415);
+  } finally { close?.(); }
+}
+async function loadImageElement(blob: Blob): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob); const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new LocalApiError('O navegador não conseguiu abrir esta imagem. Converta-a para JPG, PNG ou WEBP e tente novamente.', 415)); };
+    image.src = url;
+  });
 }
 function similarity(a: string, b: string): number {
   let x = BigInt(`0x${a}`) ^ BigInt(`0x${b}`); let count = 0;
@@ -234,8 +268,9 @@ export async function localDemoApi<T = any>(pathInput: string, init: RequestInit
   if (m && method === 'GET') return { data: s.photoMeta.filter((p) => p.assetId === m![1] && !p.archivedAt).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(({ blob, ...p }) => ({ ...p, fileUrl: `/api/assets/${m![1]}/photos/${p.id}/file` })) } as T;
   if (m && method === 'POST') {
     requireRole(['ADMIN', 'GESTOR', 'OPERADOR']); const form = init.body instanceof FormData ? init.body : null; const file = form?.get('photo'); if (!(file instanceof Blob)) throw new LocalApiError('Selecione uma fotografia.');
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new LocalApiError('Formato inválido. Envie JPG, PNG ou WEBP.');
-    if (file.size > 12 * 1024 * 1024) throw new LocalApiError('A fotografia deve ter até 12 MB na demonstração.');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new LocalApiError('Formato não suportado. Envie a fotografia em JPG, PNG ou WEBP. Fotos HEIC/HEIF devem ser convertidas antes do envio.', 415);
+    if (file.size === 0) throw new LocalApiError('O arquivo selecionado está vazio.', 400);
+    if (file.size > 12 * 1024 * 1024) throw new LocalApiError('A fotografia deve ter até 12 MB na demonstração. Reduza o tamanho ou a resolução e tente novamente.', 413);
     const asset = s.assets.find((a) => a.id === m![1] && !a.archivedAt); if (!asset) throw new LocalApiError('Equipamento não encontrado.', 404);
     const photoId = id(); const dhash = await hashImage(file); const originalName = (file as File).name || 'fotografia';
     await photoPut(photoId, file); const imageRole = String(form?.get('imageRole') || 'EQUIPAMENTO');
@@ -262,7 +297,11 @@ export async function localDemoApi<T = any>(pathInput: string, init: RequestInit
     a.updatedAt = now(); record('DADOS_DA_PLAQUETA_CONFIRMADOS', 'ASSET', a.id); save(); return { message: 'Dados revisados e gravados no cadastro demonstrativo.' } as T;
   }
   if (path === '/assets/search-by-image' && method === 'POST') {
-    const form = init.body instanceof FormData ? init.body : null; const file = form?.get('photo'); if (!(file instanceof Blob)) throw new LocalApiError('Selecione uma imagem para comparar.'); const hash = await hashImage(file);
+    const form = init.body instanceof FormData ? init.body : null; const file = form?.get('photo'); if (!(file instanceof Blob)) throw new LocalApiError('Selecione uma imagem para comparar.');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new LocalApiError('Formato não suportado para busca. Envie JPG, PNG ou WEBP. Fotos HEIC/HEIF devem ser convertidas antes da comparação.', 415);
+    if (file.size === 0) throw new LocalApiError('O arquivo selecionado está vazio.', 400);
+    if (file.size > 12 * 1024 * 1024) throw new LocalApiError('A imagem deve ter até 12 MB para comparação.', 413);
+    const hash = await hashImage(file);
     const matches = [] as any[]; for (const photo of s.photoMeta.filter((p) => !p.archivedAt)) { const score = similarity(hash, photo.dhash); const asset = s.assets.find((a) => a.id === photo.assetId && !a.archivedAt); if (!asset) continue; matches.push({ photoId: photo.id, assetId: asset.id, assetNumber: asset.assetNumber, name: asset.name, manufacturer: asset.manufacturer, model: asset.model, similarity: score, confidence: score >= .85 ? 'ALTA_SIMILARIDADE' : score >= .7 ? 'POSSIVEL_CORRESPONDENCIA' : score >= .55 ? 'BAIXA_SIMILARIDADE' : 'SEM_CORRESPONDENCIA', fileUrl: `/api/assets/${asset.id}/photos/${photo.id}/file` }); }
     matches.sort((a, b) => b.similarity - a.similarity); return { data: matches.slice(0, 10), disclaimer: 'Comparação aproximada por hash perceptual local (dHash). Semelhança visual não confirma identidade; confira patrimônio, plaqueta e número de série.' } as T;
   }

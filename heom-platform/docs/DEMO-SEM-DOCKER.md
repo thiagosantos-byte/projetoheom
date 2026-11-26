@@ -28,7 +28,7 @@ Na primeira visita, selecione Administrador, Gestor, Operador ou Consulta. O sel
 
 - Similaridade fotográfica: dHash local, somente triagem visual.
 - QR Code: geração local; leitura por `BarcodeDetector` quando disponível, ou entrada manual/leitor USB.
-- OCR Tesseract: não está embarcado na demonstração web; a interface informa a indisponibilidade e oferece revisão manual dos campos da plaqueta.
+- OCR Tesseract.js: leitura da plaqueta no navegador, carregada sob demanda via CDN. Requer internet na primeira utilização; tenta preencher fabricante, modelo, número de série e patrimônio oficial. A revisão do operador continua obrigatória.
 - Rastreamento: simulador local sem gateways, MQTT, BLE, RFID ou UWB físicos.
 - Planta: esquema ilustrativo, não é planta arquitetônica oficial.
 

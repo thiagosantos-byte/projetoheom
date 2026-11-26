@@ -24,7 +24,7 @@ A base local é isolada por origem e navegador. Não sincroniza visitantes nem d
 
 - Fotos JPG/PNG/WEBP são armazenadas em IndexedDB; metadados e associação com equipamento ficam em localStorage.
 - Hash dHash 64-bit é calculado em canvas para busca aproximada por similaridade.
-- OCR Tesseract é indisponível no navegador/serverless sem instalar o binário e os modelos. O fluxo demonstra revisão manual dos campos, sem afirmar que OCR executou.
+- O cadastro novo oferece OCR Tesseract.js no navegador, sem enviar a imagem a um serviço de OCR. O script, o worker, o core WASM e os modelos `por`/`eng` são carregados sob demanda via CDN; a primeira leitura exige internet. O OCR tenta extrair fabricante, modelo, número de série e patrimônio oficial e preenche os campos para revisão humana. O backend/serverless não executa binário Tesseract.
 - QR Code é gerado no cliente como SVG pelo pacote `qrcode`, com payload `HEOM-ASSET:<UUID>`.
 - A câmera QR utiliza `BarcodeDetector` se o navegador suportar; há campo de leitura manual/scanner USB como alternativa.
 

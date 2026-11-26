@@ -20,7 +20,7 @@
 ## Limitações que devem ser mostradas ao avaliador
 
 - **Persistência isolada por navegador:** os dados não são compartilhados entre visitantes, dispositivos ou navegadores. Sem banco externo não há sincronização multiusuário.
-- **OCR automático:** Tesseract e os modelos `por`/`eng` não estão embarcados no browser nem na Function. A aplicação não inventa leitura; oferece formulário manual para revisar fabricante, modelo e número de série.
+- **OCR de plaqueta:** o cadastro assistido executa Tesseract.js no navegador e baixa o mecanismo/modelos `por` e `eng` sob demanda via CDN; requer internet na primeira utilização. A extração é heurística e pode errar. Fabricante, modelo, série e patrimônio são preenchidos somente quando reconhecidos; número interno HEOM, nome, categoria e localização continuam manuais. Conferência humana obrigatória.
 - **Busca visual:** dHash de 64 bits é similaridade de aparência, não IA/embedding nem reconhecimento confiável. Pode gerar falsos positivos/negativos e exige confirmação por patrimônio/série.
 - **QR câmera:** depende do navegador oferecer `BarcodeDetector` e permissão em contexto seguro. Campo manual/scanner USB são alternativas.
 - **Rastreamento:** simulador no navegador, sem gateway BLE/RFID/UWB físico, MQTT ou localização em tempo real.

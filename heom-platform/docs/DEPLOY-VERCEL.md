@@ -49,7 +49,7 @@ As Vercel Functions não gravam a demonstração em `/tmp`. O handler serverless
 ## 5. Limitações funcionais da hospedagem
 
 - WebSocket persistente foi removido do fluxo demonstrativo; atualizações são feitas sob demanda.
-- OCR Tesseract não está empacotado na Function; a interface permite revisar/transcrever fabricante, modelo e número de série manualmente.
+- OCR Tesseract.js é executado no navegador, fora da Function. O primeiro uso exige acesso à CDN para carregar script, worker, core WASM e modelos português/inglês. As imagens são processadas no dispositivo; a fotografia original é armazenada no IndexedDB da demonstração do navegador.
 - Leitura QR por câmera depende de `BarcodeDetector`; scanner USB/entrada manual são alternativas.
 - Similaridade por imagem é dHash local, não IA de reconhecimento.
 - Planta e rastreamento são demonstrativos, sem hardware físico.

@@ -1,10 +1,26 @@
 # HEOM — Hospital Equipment Operations Management
 
-**Versão 0.4.0 · Demonstração institucional · React + TypeScript + Express + Vercel**
+**Versão 0.5.0 · Correção do armazenamento de fotografias · Demonstração institucional · React + TypeScript + Express + Vercel**
 
 O HEOM nesta distribuição é uma aplicação integrada para demonstração de gestão de equipamentos hospitalares. Interface e API compartilham o mesmo projeto e, localmente, o mesmo processo HTTP. A demonstração pública abre sem login, e-mail, senha, criação de conta, `.env`, PostgreSQL, MQTT, Docker ou outro serviço externo.
 
 > **Importante:** todos os registros são fictícios. Os quatro perfis são personagens para avaliar permissões de interface, não autenticação ou segurança de produção. Os dados criados ficam no armazenamento do navegador que os criou; visitantes diferentes não compartilham alterações. Não cadastrar dados de pacientes, profissionais, equipamentos reais ou patrimônio institucional.
+
+## Correção 0.4.1 — fotografias
+
+- Transações do IndexedDB agora encerram a conexão corretamente em sucesso e falha.
+- Mensagens específicas para armazenamento bloqueado, falta de espaço, conexão ocupada e formato incompatível.
+- Busca visual valida formato e tamanho antes da comparação.
+- JPG, PNG e WEBP até 12 MB são aceitos; HEIC/HEIF precisa ser convertido para um desses formatos.
+- As imagens continuam armazenadas no navegador que as enviou, sem depender do filesystem temporário da Vercel.
+
+## Cadastro assistido por fotografia — 0.5.0
+
+O formulário de novo equipamento agora oferece leitura OCR da plaqueta diretamente no navegador. O reconhecimento tenta identificar fabricante, modelo, número de série e número patrimonial oficial. Os valores reconhecidos são preenchidos para conferência e podem ser corrigidos antes de salvar. A fotografia original é anexada ao cadastro como imagem do tipo PLAQUETA.
+
+O OCR utiliza Tesseract.js carregado sob demanda e baixa os modelos de idioma português/inglês na primeira utilização. É necessária conexão à internet para carregar o mecanismo e os modelos; a imagem é processada no navegador e não é enviada ao serviço de OCR. O resultado depende da nitidez, iluminação, ângulo e estado da plaqueta.
+
+O número interno HEOM, nome do equipamento, categoria, setor e ambiente continuam exigindo preenchimento ou confirmação pelo operador. O OCR não deve ser tratado como fonte definitiva: a conferência humana é obrigatória antes de salvar.
 
 ## Iniciar localmente
 

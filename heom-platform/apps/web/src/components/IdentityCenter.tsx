@@ -64,9 +64,9 @@ export default function IdentityCenter({ assets, canManage, canArchive, onToast,
         uploaded++;
       }
       setUploadFiles([]); const input = document.getElementById('asset-photo-input') as HTMLInputElement | null; if (input) input.value = '';
-      onToast(`${uploaded} fotografia(s) armazenada(s) no servidor local.`); await loadPhotos(); onRefresh();
+      onToast(`${uploaded} fotografia(s) armazenada(s) neste navegador.`); await loadPhotos(); onRefresh();
     } catch (error) {
-      onToast(`${uploaded} de ${uploadFiles.length} fotografia(s) foram armazenadas. ${error instanceof Error ? error.message : 'Não foi possível concluir o envio.'}`, 'error');
+      onToast(`${uploaded} de ${uploadFiles.length} fotografia(s) foram armazenadas. ${error instanceof Error && error.message ? error.message : 'Falha no armazenamento local. Verifique se o navegador permite dados do site e tente novamente.'}`, 'error');
       await loadPhotos();
     } finally { setBusy(false); }
   }
