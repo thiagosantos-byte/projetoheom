@@ -1,6 +1,7 @@
 import QRCode from 'qrcode';
 import { validateAssetDraft } from './asset-validation';
 import { validateImageSignature } from './image-validation';
+import { summarizeDashboardAssets } from './dashboard-analytics';
 
 type Role = 'ADMIN' | 'GESTOR' | 'OPERADOR' | 'CONSULTA';
 type DemoUser = { id: string; name: string; role: Role };
@@ -247,8 +248,42 @@ export async function localDemoApi<T = any>(pathInput: string, init: RequestInit
   if (path === '/departments' && method === 'GET') return { data: s.departments.filter((d) => d.active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) } as T;
   if (path === '/rooms' && method === 'GET') return { data: s.rooms.map((r) => ({ ...r, assetCount: s.assets.filter((a) => a.roomId === r.id && !a.archivedAt).length })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) } as T;
   if (path === '/dashboard' && method === 'GET') {
-    const active = s.assets.filter((a) => !a.archivedAt); const open = s.alerts.filter((a) => a.status !== 'RESOLVIDO');
-    return { metrics: { total: active.length, operating: active.filter((a) => a.operationalStatus === 'EM_OPERACAO').length, unavailable: active.filter((a) => a.operationalStatus === 'INDISPONIVEL').length, maintenance: active.filter((a) => a.operationalStatus === 'EM_MANUTENCAO').length, tracking: active.filter((a) => ['LOCALIZACAO_CONFIRMADA', 'SETOR_ESTIMADO'].includes(a.trackingStatus)).length, simulated: active.length, open: open.length, critical: open.filter((a) => a.severity === 'CRITICO').length, pending: s.movements.filter((m) => m.status === 'PENDENTE').length }, recentEvents: s.locationEvents.slice(0, 8).map((e) => ({ ...e, assetName: s.assets.find((a) => a.id === e.assetId)?.name, assetNumber: s.assets.find((a) => a.id === e.assetId)?.assetNumber, roomName: s.rooms.find((r) => r.id === e.roomId)?.name, departmentName: s.departments.find((d) => d.id === s.rooms.find((r) => r.id === e.roomId)?.departmentId)?.name })), departments: s.departments.map((d) => { const items = active.filter((a) => a.departmentId === d.id); return { id: d.id, name: d.name, dataOrigin: 'SIMULADO', assetCount: items.length, operatingCount: items.filter((a) => a.operationalStatus === 'EM_OPERACAO').length }; }), demoMode: true } as T;
+    const active = s.assets.filter((a) => !a.archivedAt);
+    const open = s.alerts.filter((a) => a.status !== 'RESOLVIDO');
+    const analytics = summarizeDashboardAssets(active);
+    return {
+      metrics: {
+        total: active.length,
+        operating: active.filter((a) => a.operationalStatus === 'EM_OPERACAO').length,
+        unavailable: active.filter((a) => a.operationalStatus === 'INDISPONIVEL').length,
+        maintenance: active.filter((a) => a.operationalStatus === 'EM_MANUTENCAO').length,
+        tracking: active.filter((a) => ['LOCALIZACAO_CONFIRMADA', 'SETOR_ESTIMADO'].includes(a.trackingStatus)).length,
+        simulated: active.length,
+        open: open.length,
+        critical: open.filter((a) => a.severity === 'CRITICO').length,
+        pending: s.movements.filter((m) => m.status === 'PENDENTE').length
+      },
+      recentEvents: s.locationEvents.slice(0, 8).map((e) => ({
+        ...e,
+        assetName: s.assets.find((a) => a.id === e.assetId)?.name,
+        assetNumber: s.assets.find((a) => a.id === e.assetId)?.assetNumber,
+        roomName: s.rooms.find((r) => r.id === e.roomId)?.name,
+        departmentName: s.departments.find((d) => d.id === s.rooms.find((r) => r.id === e.roomId)?.departmentId)?.name
+      })),
+      departments: s.departments.filter((d) => d.active).map((d) => {
+        const items = active.filter((a) => a.departmentId === d.id);
+        return {
+          id: d.id,
+          name: d.name,
+          dataOrigin: 'SIMULADO',
+          assetCount: items.length,
+          operatingCount: items.filter((a) => a.operationalStatus === 'EM_OPERACAO').length
+        };
+      }),
+      categories: analytics.categories,
+      coverage: analytics.coverage,
+      demoMode: true
+    } as T;
   }
   if (path === '/assets' && method === 'GET') {
     const q = (query.get('q') || '').toLocaleLowerCase('pt-BR'); const status = query.get('status') || ''; const dept = query.get('departmentId') || ''; const criticality = query.get('criticality') || '';

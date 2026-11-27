@@ -20,5 +20,7 @@ export type DashboardData = {
   metrics: { total: number; operating: number; unavailable: number; maintenance: number; tracking: number; simulated: number; open: number; critical: number; pending: number };
   recentEvents: Array<{ id: string; source: string; detectedAt: string; assetName: string; assetNumber: string; roomName?: string; departmentName?: string; rssi?: number }>;
   departments: Array<{ id: string; name: string; dataOrigin: string; assetCount: number; operatingCount: number }>;
+  categories: Array<{ name: string; value: number }>;
+  coverage: { total: number; department: number; room: number; manufacturerModel: number; serialNumber: number; propertyReference: number; trackingTag: number };
   demoMode: boolean;
 };

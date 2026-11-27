@@ -171,7 +171,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', authenticate, async (req, res) => res.json({ user: req.user }));
 
 app.get('/api/dashboard', authenticate, async (_req, res) => {
-  const [totals, alerts, movements, recentEvents, departments] = await Promise.all([
+  const [totals, alerts, movements, recentEvents, departments, categories, coverage] = await Promise.all([
     pool.query(`SELECT COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE operational_status = 'EM_OPERACAO')::int AS operating,
       COUNT(*) FILTER (WHERE operational_status = 'INDISPONIVEL')::int AS unavailable,
@@ -189,12 +189,26 @@ app.get('/api/dashboard', authenticate, async (_req, res) => {
     pool.query(`SELECT d.id, d.name, d.data_origin AS "dataOrigin", COUNT(a.id)::int AS "assetCount",
       COUNT(a.id) FILTER (WHERE a.operational_status='EM_OPERACAO')::int AS "operatingCount"
       FROM departments d LEFT JOIN assets a ON a.department_id=d.id AND a.archived_at IS NULL
-      WHERE d.active=true GROUP BY d.id ORDER BY d.name`)
+      WHERE d.active=true GROUP BY d.id ORDER BY d.name`),
+    pool.query(`SELECT COALESCE(NULLIF(BTRIM(category), ''), 'Categoria não informada') AS name,
+      COUNT(*)::int AS value FROM assets WHERE archived_at IS NULL
+      GROUP BY COALESCE(NULLIF(BTRIM(category), ''), 'Categoria não informada')
+      ORDER BY COUNT(*) DESC, name ASC`),
+    pool.query(`SELECT COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE department_id IS NOT NULL)::int AS department,
+      COUNT(*) FILTER (WHERE room_id IS NOT NULL)::int AS room,
+      COUNT(*) FILTER (WHERE NULLIF(BTRIM(manufacturer), '') IS NOT NULL AND NULLIF(BTRIM(model), '') IS NOT NULL)::int AS "manufacturerModel",
+      COUNT(*) FILTER (WHERE NULLIF(BTRIM(serial_number), '') IS NOT NULL)::int AS "serialNumber",
+      COUNT(*) FILTER (WHERE NULLIF(BTRIM(official_property_number), '') IS NOT NULL OR NULLIF(BTRIM(reference), '') IS NOT NULL)::int AS "propertyReference",
+      COUNT(*) FILTER (WHERE NULLIF(BTRIM(tracking_tag_id), '') IS NOT NULL)::int AS "trackingTag"
+      FROM assets WHERE archived_at IS NULL`)
   ]);
   res.json({
     metrics: { ...totals.rows[0], ...alerts.rows[0], ...movements.rows[0] },
     recentEvents: recentEvents.rows,
     departments: departments.rows,
+    categories: categories.rows,
+    coverage: coverage.rows[0],
     demoMode: process.env.DEMO_MODE === 'true'
   });
 });

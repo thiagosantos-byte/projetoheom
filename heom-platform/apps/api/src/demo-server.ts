@@ -317,6 +317,22 @@ app.get('/api/dashboard', authenticate, (_req, res) => {
     const items = activeAssets.filter((asset) => asset.departmentId === department.id);
     return { id: department.id, name: department.name, dataOrigin: department.dataOrigin, assetCount: items.length, operatingCount: items.filter((asset) => asset.operationalStatus === 'EM_OPERACAO').length };
   });
+  const categoryCounts = new Map<string, number>();
+  for (const asset of activeAssets) {
+    const name = asset.category?.trim() || 'Categoria não informada';
+    categoryCounts.set(name, (categoryCounts.get(name) || 0) + 1);
+  }
+  const categories = Array.from(categoryCounts, ([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name, 'pt-BR'));
+  const coverage = {
+    total: activeAssets.length,
+    department: activeAssets.filter((asset) => Boolean(asset.departmentId)).length,
+    room: activeAssets.filter((asset) => Boolean(asset.roomId)).length,
+    manufacturerModel: activeAssets.filter((asset) => Boolean(asset.manufacturer?.trim()) && Boolean(asset.model?.trim())).length,
+    serialNumber: activeAssets.filter((asset) => Boolean(asset.serialNumber?.trim())).length,
+    propertyReference: activeAssets.filter((asset) => Boolean(asset.officialPropertyNumber?.trim()) || Boolean(asset.reference?.trim())).length,
+    trackingTag: activeAssets.filter((asset) => Boolean(asset.trackingTagId?.trim())).length
+  };
   return res.json({
     metrics: {
       total: activeAssets.length, operating: activeAssets.filter((item) => item.operationalStatus === 'EM_OPERACAO').length,
@@ -326,7 +342,7 @@ app.get('/api/dashboard', authenticate, (_req, res) => {
       simulated: activeAssets.filter((item) => item.dataOrigin === 'SIMULADO').length, open: openAlerts.length,
       critical: openAlerts.filter((item) => item.severity === 'CRITICO').length,
       pending: store.movements.filter((item) => item.status === 'PENDENTE').length
-    }, recentEvents, departments, demoMode: true
+    }, recentEvents, departments, categories, coverage, demoMode: true
   });
 });
 

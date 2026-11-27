@@ -1,6 +1,6 @@
 # HEOM — Hospital Equipment Operations Management
 
-**Versão 0.5.1 · OCR compartilhado no navegador · QR SVG/PNG e leitura ZXing · Demonstração institucional · React + TypeScript + Express + Vercel**
+**Versão 0.8.0 · Infográfico acessível · Comandos por voz · Apoio à memória e mobilidade · OCR local · QR Code · React + TypeScript + Express + Vercel**
 
 O HEOM nesta distribuição é uma aplicação integrada para demonstração de gestão de equipamentos hospitalares. Interface e API compartilham o mesmo projeto e, localmente, o mesmo processo HTTP. A demonstração pública abre sem login, e-mail, senha, criação de conta, `.env`, PostgreSQL, MQTT, Docker ou outro serviço externo.
 
